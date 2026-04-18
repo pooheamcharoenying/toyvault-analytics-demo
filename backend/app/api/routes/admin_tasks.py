@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from typing import List
 import pandas as pd
 from pydantic import BaseModel
@@ -18,33 +18,51 @@ def test_route():
 class BarcodesIn(BaseModel):
     barcodes: List[str]
 
-# Read once per request (consider caching if the file is large/unchanged)
-master_nic = pd.read_excel(
-    "app/Master NIC 11-09-25 UP.xlsx",
-    sheet_name="Master SAP 11-09-25",
-    engine="openpyxl",
-    dtype={"Bar Code": str, "Item No.": str},
-)
+
+def _get_barcode_lookup() -> pd.Series:
+    """
+    Build a barcode -> ItemCode lookup from the Item Master sheet
+    of the main loaded Excel. This replaces the old Master NIC file
+    dependency: the main Item Master has both 'Bar Code' and 'ItemCode'
+    columns, so the same functionality works without a separate file.
+    """
+    if not hf.GLOBAL_DF or "master" not in hf.GLOBAL_DF:
+        raise HTTPException(status_code=503, detail="Data not loaded yet")
+
+    master = hf.GLOBAL_DF["master"]
+    if "Bar Code" not in master.columns or "ItemCode" not in master.columns:
+        raise HTTPException(
+            status_code=500,
+            detail="Item Master missing 'Bar Code' or 'ItemCode' column",
+        )
+
+    # Coerce to strings and drop empties before building the index
+    subset = master[["Bar Code", "ItemCode"]].copy()
+    subset["Bar Code"] = subset["Bar Code"].astype(str).str.strip()
+    subset["ItemCode"] = subset["ItemCode"].astype(str).str.strip()
+    subset = subset[(subset["Bar Code"] != "") & (subset["Bar Code"] != "nan")]
+    subset = subset.drop_duplicates(subset=["Bar Code"], keep="first")
+    return subset.set_index("Bar Code")["ItemCode"]
+
 
 @router.post("/barcodes")
 async def get_item_numbers(payload: BarcodesIn):
+    """Look up ItemCodes for a list of barcodes, using the main Item Master."""
     barcode_list = payload.barcodes
-    item_numbers: List[str] = []
+    item_numbers: List[str | None] = []
 
-    # Build a fast lookup (exact match). If you truly need partial matches, switch back to .str.contains.
-    master_nic_drop = master_nic.dropna(subset=["Bar Code", "Item No."])
-    index_by_barcode = master_nic_drop.set_index("Bar Code")["Item No."]
+    index_by_barcode = _get_barcode_lookup()
 
     for barcode in barcode_list:
-        bc = str(barcode)
-        if bc in index_by_barcode:
-            item_numbers.append(index_by_barcode[bc])
+        bc = str(barcode).strip()
+        if bc in index_by_barcode.index:
+            item_numbers.append(str(index_by_barcode[bc]))
         else:
-            # Fallback to contains (slow) only if exact not found — optional
-            matches = master_nic[master_nic["Bar Code"].str.contains(bc, na=False)]
-            if not matches.empty:
-                item_numbers.append(matches.iloc[0]["Item No."])
+            # Fallback: partial match (slower, rarely useful for EAN codes)
+            hits = index_by_barcode.index[index_by_barcode.index.str.contains(bc, na=False)]
+            if len(hits) > 0:
+                item_numbers.append(str(index_by_barcode[hits[0]]))
             else:
-                item_numbers.append(None)  # or raise an HTTPException
+                item_numbers.append(None)
 
     return {"item_numbers": item_numbers}
