@@ -1,0 +1,62 @@
+# Environment & secrets
+.env
+.env.local
+.env.production
+.env.*.local
+**/.env
+**/.env.local
+**/.env.production
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+myenv/
+venv/
+.venv/
+env/
+
+# Data & cache (large files, never commit)
+.excel_cache/
+**/.excel_cache/
+uploads/
+**/uploads/
+*.xlsx
+*.xls
+
+# Anonymization mappings — would leak the original-to-fake mapping
+anonymization_mappings.json
+full_mappings.json
+**/anonymization_mappings.json
+**/full_mappings.json
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.yarn/
+.pnp.*
+build/
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Misc
+*.tgz
+*.tar.gz

@@ -1,0 +1,36 @@
+import { NextResponse } from "next/server";
+import axios from "axios";
+
+export const runtime = "nodejs";
+
+const API_BASE_URL = process.env.API_BASE_URL || process.env.NEXT_PUBLIC_API_URL;
+const API_BASIC_USER = process.env.API_BASIC_USER;
+const API_BASIC_PASS = process.env.API_BASIC_PASS;
+
+function assertEnv() {
+  const missing = [];
+  if (!API_BASE_URL) missing.push("API_BASE_URL or NEXT_PUBLIC_API_URL");
+  if (!API_BASIC_USER) missing.push("API_BASIC_USER");
+  if (!API_BASIC_PASS) missing.push("API_BASIC_PASS");
+  if (missing.length) throw new Error("Missing env vars: " + missing.join(", "));
+}
+
+export async function GET(req) {
+  try {
+    assertEnv();
+    const { searchParams } = new URL(req.url);
+    const targetUrl = new URL("/api/transfer_history", API_BASE_URL);
+    if (searchParams.get("year")) targetUrl.searchParams.set("year", searchParams.get("year"));
+    if (searchParams.get("top_n")) targetUrl.searchParams.set("top_n", searchParams.get("top_n"));
+
+    const response = await axios.get(targetUrl.toString(), {
+      auth: { username: API_BASIC_USER, password: API_BASIC_PASS },
+    });
+    return NextResponse.json(response.data, { status: response.status });
+  } catch (err) {
+    return NextResponse.json(
+      { error: "Server error", details: err.response?.data || err.message },
+      { status: err.response?.status || 500 }
+    );
+  }
+}
