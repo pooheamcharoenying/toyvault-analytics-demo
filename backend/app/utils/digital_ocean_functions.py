@@ -162,26 +162,54 @@ def _cache_put(key: str, body: bytes):
 
 
 def _parse_excel_bytes(body: bytes) -> Dict[str, pd.DataFrame]:
-    """Parse the standard set of sheets from Excel bytes."""
-    buf = BytesIO(body)
-    sale = pd.read_excel(buf, sheet_name="Sale")
-    buf.seek(0)
-    onhand = pd.read_excel(buf, sheet_name="OnHand")
-    buf.seek(0)
-    master = pd.read_excel(buf, sheet_name="Item Master")
-    buf.seek(0)
-    grpo_detail = pd.read_excel(buf, sheet_name="GRPO Detail")
-    buf.seek(0)
-    whs_code = pd.read_excel(buf, sheet_name="Whs Code")
-    buf.seek(0)
-    tr_in = pd.read_excel(buf, sheet_name="TR IN")
-    buf.seek(0)
-    tr_out = pd.read_excel(buf, sheet_name="TR Out")
-    return {
-        "sale": sale, "onhand": onhand, "master": master,
-        "grpo_detail": grpo_detail, "whs_code": whs_code,
-        "tr_in": tr_in, "tr_out": tr_out,
-    }
+    """
+    Parse the standard set of sheets from Excel bytes.
+
+    Prefers the `calamine` engine (Rust-based, ~10x faster and lower memory
+    than openpyxl). Falls back to openpyxl if calamine isn't available or
+    chokes on the file.
+    """
+    import time
+
+    # Try calamine first; if it fails (import or parse error), fall back to openpyxl
+    engines_to_try = ["calamine", "openpyxl"]
+
+    sheet_names = [
+        ("sale", "Sale"),
+        ("onhand", "OnHand"),
+        ("master", "Item Master"),
+        ("grpo_detail", "GRPO Detail"),
+        ("whs_code", "Whs Code"),
+        ("tr_in", "TR IN"),
+        ("tr_out", "TR Out"),
+    ]
+
+    last_error: Optional[Exception] = None
+    for engine in engines_to_try:
+        try:
+            logger.info("Parsing Excel with engine=%s ...", engine)
+            results: Dict[str, pd.DataFrame] = {}
+            t_total = time.time()
+            buf = BytesIO(body)
+            for key, sheet in sheet_names:
+                t0 = time.time()
+                buf.seek(0)
+                df = pd.read_excel(buf, sheet_name=sheet, engine=engine)
+                elapsed = time.time() - t0
+                logger.info("  %s: %d rows, %d cols (%.1fs)", sheet, len(df), len(df.columns), elapsed)
+                results[key] = df
+            logger.info("Parse complete in %.1fs (engine=%s)", time.time() - t_total, engine)
+            return results
+        except ImportError as e:
+            logger.warning("Engine %s not available: %s. Trying next engine.", engine, e)
+            last_error = e
+            continue
+        except Exception as e:
+            logger.warning("Engine %s failed mid-parse: %s. Trying next engine.", engine, e)
+            last_error = e
+            continue
+
+    raise RuntimeError(f"All Excel engines failed. Last error: {last_error}")
 
 
 def fetch_excel_to_dfs(
