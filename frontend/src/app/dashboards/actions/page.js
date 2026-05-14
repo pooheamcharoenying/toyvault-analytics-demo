@@ -29,7 +29,7 @@ const SEV_STYLE = {
 const TYPE_LABEL = {
   reorder: "Reorder",
   transfer: "Transfer Stock",
-  markdown: "Markdown / Liquidate",
+  markdown: "Markdown / Liquidate / Promotions",
   investigate: "Investigate",
 };
 

@@ -653,3 +653,248 @@ def compute_rebalancing_summary(
         "location_balance": location_balance,
         "brand_opportunities": brand_opps,
     }
+
+
+# ---------------------------------------------------------------------------
+# 4. Smart Transfer Recommendations
+# ---------------------------------------------------------------------------
+
+def compute_smart_transfer_recommendations(
+    df_raw_sale: pd.DataFrame,
+    df_raw_onhand: pd.DataFrame,
+    df_item_master: pd.DataFrame,
+    df_whs_code: pd.DataFrame,
+    *,
+    window_days: int = 90,
+    target_days_at_destination: int = 90,
+    min_destination_velocity: float = 0.05,
+    min_transfer_thb: float = 5_000.0,
+    top_n: int = 30,
+) -> dict[str, Any]:
+    """Recommend dead-stock transfers from poorly-performing to high-performing locations.
+
+    Strategy:
+      1. Score every location using `location_analytics.compute_location_performance`
+         and split into "good" (status == green) and "poor" (status == red).
+      2. For every item with on-hand at a poor location but ZERO recent sales
+         there, treat that on-hand as dead-stock candidate for moving.
+      3. For each good destination that does sell the same item, compute its
+         current days_cover. Only transfer if that destination is currently
+         under-stocked relative to ``target_days_at_destination`` — otherwise
+         we'd just be moving capital into another corner.
+      4. Recommended quantity = min(dead qty at source, capacity gap at
+         destination). Split across multiple destinations when the source
+         carries more than any single good location can absorb. This keeps
+         SKU distribution wide across the storefront.
+
+    Warehouses (consolidated name starting with "Warehouse ") are NOT classified
+    as poor performers — they're back-of-house holding sites and their idle
+    stock is normal, not a transfer signal.
+
+    Returns the recommendations list plus diagnostic context (the location
+    classification used and items considered).
+    """
+    from app.utils import location_analytics as la
+
+    if df_whs_code is None or df_whs_code.empty:
+        return {
+            "summary": {"recommendations_count": 0, "total_transfer_thb": 0.0,
+                        "good_locations": 0, "poor_locations": 0},
+            "recommendations": [],
+            "good_locations": [],
+            "poor_locations": [],
+        }
+
+    # ── 1. Location classification ──────────────────────────────────────
+    loc_perf = la.compute_location_performance(
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        window_days=window_days,
+    )
+
+    good_set: set[str] = set()
+    poor_set: set[str] = set()
+    for loc in loc_perf.get("locations", []):
+        name = str(loc.get("location", "")).strip()
+        if not name:
+            continue
+        # Warehouses aren't retail performers — exclude from both buckets.
+        if name.lower().startswith("warehouse "):
+            continue
+        status = loc.get("status")
+        if status == "green":
+            good_set.add(name)
+        elif status == "red":
+            poor_set.add(name)
+        # 'yellow' locations are neither donors nor preferred destinations.
+
+    if not good_set or not poor_set:
+        return {
+            "summary": {"recommendations_count": 0, "total_transfer_thb": 0.0,
+                        "good_locations": len(good_set), "poor_locations": len(poor_set)},
+            "recommendations": [],
+            "good_locations": sorted(good_set),
+            "poor_locations": sorted(poor_set),
+        }
+
+    # ── 2. Per-item on-hand + sales velocity at each consolidated location ──
+    df_sale_prep, _, _ = nstk.prepare_sales_and_onhand_data(
+        df_raw_sale, df_raw_onhand, df_item_master
+    )
+    df_sale_prep = _channel_dedup_sale(df_sale_prep) if not df_sale_prep.empty else df_sale_prep
+
+    oh = _prepare_onhand_with_price(df_raw_onhand, df_item_master, df_whs_code)
+    if oh.empty:
+        return {
+            "summary": {"recommendations_count": 0, "total_transfer_thb": 0.0,
+                        "good_locations": len(good_set), "poor_locations": len(poor_set)},
+            "recommendations": [],
+            "good_locations": sorted(good_set),
+            "poor_locations": sorted(poor_set),
+        }
+
+    # Per-item per-consolidated-location sales velocity in the recent window
+    velocity = pd.DataFrame()
+    if not df_sale_prep.empty:
+        cutoff = df_sale_prep["DocDate"].max() - pd.Timedelta(days=window_days)
+        recent = df_sale_prep[df_sale_prep["DocDate"] >= cutoff].copy()
+        recent["WhsCode"] = recent["WhsCode"].astype(str).str.strip()
+        # Merge consolidated location name onto recent sales
+        whs = df_whs_code[["WhsCode", "WhsName"]].copy()
+        whs["WhsCode"] = whs["WhsCode"].astype(str).str.strip()
+        from app.utils.location_consolidation import add_consolidated_column
+        _whs_lookup = dict(zip(whs["WhsCode"], whs["WhsName"]))
+        recent = recent.merge(whs, on="WhsCode", how="left")
+        recent = add_consolidated_column(recent, _whs_lookup)
+        recent["WhsName"] = recent["ConsolidatedLocation"]
+        velocity = (
+            recent.groupby(["ItemCode", "WhsName"], as_index=False)
+            .agg(sold_qty=("Quantity", "sum"))
+        )
+        velocity["daily_sales"] = velocity["sold_qty"] / max(window_days, 1)
+
+    # Aggregate on-hand to (ItemCode, consolidated WhsName)
+    oh_agg = (
+        oh.groupby(["ItemCode", "WhsName", "Brand", "Master Price"], as_index=False)
+        .agg(onhand_qty=("OnHand", "sum"), onhand_thb=("OnHand_THB", "sum"))
+    )
+    if "ItemName" in oh.columns:
+        names = oh.groupby("ItemCode", as_index=False)["ItemName"].first()
+        oh_agg = oh_agg.merge(names, on="ItemCode", how="left")
+    else:
+        oh_agg["ItemName"] = ""
+    oh_agg = oh_agg[oh_agg["onhand_qty"] > 0]
+
+    if not velocity.empty:
+        merged = oh_agg.merge(velocity, on=["ItemCode", "WhsName"], how="left")
+    else:
+        merged = oh_agg.copy()
+        merged["sold_qty"] = 0.0
+        merged["daily_sales"] = 0.0
+    merged["sold_qty"] = merged["sold_qty"].fillna(0.0)
+    merged["daily_sales"] = merged["daily_sales"].fillna(0.0)
+    merged["days_cover"] = np.where(
+        merged["daily_sales"] > 0,
+        merged["onhand_qty"] / merged["daily_sales"],
+        np.inf,
+    )
+
+    # ── 3. Build dead-stock-at-poor-location candidates ─────────────────
+    # "Dead" at a location = on-hand > 0 AND zero sales there in window.
+    dead_at_poor = merged[
+        (merged["WhsName"].isin(poor_set))
+        & (merged["onhand_qty"] > 0)
+        & (merged["sold_qty"] == 0)
+    ].copy()
+    if dead_at_poor.empty:
+        return {
+            "summary": {"recommendations_count": 0, "total_transfer_thb": 0.0,
+                        "good_locations": len(good_set), "poor_locations": len(poor_set)},
+            "recommendations": [],
+            "good_locations": sorted(good_set),
+            "poor_locations": sorted(poor_set),
+        }
+    # Sort by THB at risk descending so we pick the biggest wins first
+    dead_at_poor = dead_at_poor.sort_values("onhand_thb", ascending=False)
+
+    # ── 4. Generate transfer recommendations ────────────────────────────
+    recommendations: list[dict[str, Any]] = []
+    for _, src in dead_at_poor.iterrows():
+        if len(recommendations) >= top_n:
+            break
+        item_code = str(src["ItemCode"])
+        src_qty_remaining = float(src["onhand_qty"])
+        price = float(src["Master Price"]) if pd.notna(src["Master Price"]) else 0.0
+
+        # Find good-performing destinations that already sell this item
+        # AND are NOT currently overstocked.
+        candidates = merged[
+            (merged["ItemCode"] == item_code)
+            & (merged["WhsName"].isin(good_set))
+            & (merged["daily_sales"] >= min_destination_velocity)
+            & (merged["days_cover"] < target_days_at_destination)
+        ].copy()
+        if candidates.empty:
+            continue
+        # Capacity gap = how many units we can ship in before hitting target
+        candidates["capacity_qty"] = (
+            candidates["daily_sales"] * float(target_days_at_destination)
+            - candidates["onhand_qty"]
+        ).clip(lower=0)
+        candidates = candidates[candidates["capacity_qty"] >= 1]
+        if candidates.empty:
+            continue
+        # Pick destinations with highest velocity first — fastest sell-through
+        candidates = candidates.sort_values("daily_sales", ascending=False)
+
+        for _, dst in candidates.iterrows():
+            if src_qty_remaining <= 0 or len(recommendations) >= top_n:
+                break
+            transfer_qty = float(min(src_qty_remaining, dst["capacity_qty"]))
+            transfer_qty = round(transfer_qty)
+            if transfer_qty <= 0:
+                continue
+            transfer_thb = transfer_qty * price
+            if transfer_thb < min_transfer_thb:
+                continue
+            recommendations.append({
+                "item_code": item_code,
+                "item_name": str(src.get("ItemName", "") or ""),
+                "brand": str(src.get("Brand", "Unknown")),
+                "from_location": str(src["WhsName"]),
+                "from_status": "poor",
+                "from_onhand_qty": round(float(src["onhand_qty"])),
+                "from_days_cover": None,  # zero sales at source by definition
+                "to_location": str(dst["WhsName"]),
+                "to_status": "good",
+                "to_onhand_qty": round(float(dst["onhand_qty"])),
+                "to_days_cover": round(float(dst["days_cover"]), 1),
+                "to_target_days": int(target_days_at_destination),
+                "transfer_qty": int(transfer_qty),
+                "transfer_thb": round(transfer_thb, 0),
+                "rationale": (
+                    f"Dead stock at {src['WhsName']} (red): 0 sales in "
+                    f"{window_days}d. Destination {dst['WhsName']} (green) "
+                    f"sells {dst['daily_sales'] * 7:.1f}/wk with only "
+                    f"{dst['days_cover']:.0f}d cover — needs up to "
+                    f"{int(target_days_at_destination)}d."
+                ),
+            })
+            src_qty_remaining -= transfer_qty
+
+    total_thb = sum(r["transfer_thb"] for r in recommendations)
+    return {
+        "summary": {
+            "recommendations_count": len(recommendations),
+            "total_transfer_thb": round(total_thb, 0),
+            "good_locations": len(good_set),
+            "poor_locations": len(poor_set),
+            "target_days_at_destination": int(target_days_at_destination),
+            "window_days": int(window_days),
+        },
+        "recommendations": recommendations,
+        "good_locations": sorted(good_set),
+        "poor_locations": sorted(poor_set),
+    }

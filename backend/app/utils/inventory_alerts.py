@@ -418,3 +418,211 @@ def compute_reorder_analysis(
             "brands_needing_reorder": list({r["brand"] for r in rows}),
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Brand-grouped reorder warnings (long-cycle planning)
+# ---------------------------------------------------------------------------
+
+def compute_brand_reorder_warnings(
+    df_raw_sale: pd.DataFrame,
+    df_raw_onhand: pd.DataFrame,
+    df_item_master: pd.DataFrame,
+    df_grpo_detail: Optional[pd.DataFrame] = None,
+    as_of: Optional[pd.Timestamp] = None,
+    window_days: int = 90,
+    top_items_per_brand: int = 15,
+    warning_days_cover: int = 120,
+    target_cover_days: int = 150,
+    brand: Optional[str] = None,
+) -> dict[str, Any]:
+    """Brand-grouped reorder warnings for purchase-planning lead times.
+
+    Purchase orders flow brand → supplier → quotation → production → shipping →
+    distribution. The full cycle can take 3-4 months, so days-cover under
+    ``warning_days_cover`` (default 120) means we need to start ordering NOW
+    to avoid a stockout by the time goods arrive.
+
+    For each brand, the function:
+      1. Picks the top ``top_items_per_brand`` items by revenue in the window
+         (because we don't worry about long-tail SKUs at planning time).
+      2. Computes per-item days_cover at the company level (sum on-hand /
+         daily sales velocity from the recent window).
+      3. Computes the brand's average days_cover across the top items
+         (weighted by current on-hand quantity — items we hold more of
+         carry more weight in the brand decision).
+      4. Flags any top-seller with days_cover < ``warning_days_cover``.
+      5. Suggests an order quantity per flagged item that brings on-hand
+         up to ``target_cover_days`` of sales (default 150 = 5 months).
+
+    Returns a dict with one record per brand, sorted by warning urgency
+    (most warnings + lowest avg days_cover first).
+    """
+    df_sale, df_onhand, _ = nstk.prepare_sales_and_onhand_data(
+        df_raw_sale, df_raw_onhand, df_item_master
+    )
+    item = _build_item_velocity(df_sale, df_onhand, window_days, as_of)
+    if item.empty:
+        return {
+            "as_of": None,
+            "window_days": window_days,
+            "warning_days_cover": warning_days_cover,
+            "target_cover_days": target_cover_days,
+            "top_items_per_brand": top_items_per_brand,
+            "brands": [],
+            "summary": {
+                "total_brands": 0,
+                "total_warnings": 0,
+                "total_suggested_order_thb": 0.0,
+            },
+        }
+
+    if brand:
+        item = item[item["Brand"].str.contains(brand, case=False, na=False)]
+        if item.empty:
+            return {
+                "as_of": None,
+                "window_days": window_days,
+                "warning_days_cover": warning_days_cover,
+                "target_cover_days": target_cover_days,
+                "top_items_per_brand": top_items_per_brand,
+                "brands": [],
+                "summary": {"total_brands": 0, "total_warnings": 0, "total_suggested_order_thb": 0.0},
+            }
+
+    d = _channel_dedup_sale(df_sale)
+    as_of_ts = pd.to_datetime(as_of) if as_of is not None else d["DocDate"].max()
+
+    # Last purchase info (for context in warnings)
+    last_purchase = {}
+    if df_grpo_detail is not None and not df_grpo_detail.empty:
+        g = df_grpo_detail.copy()
+        g["DocDate"] = pd.to_datetime(g["DocDate"], errors="coerce")
+        g = g.dropna(subset=["DocDate"])
+        last = g.sort_values("DocDate").groupby("ItemCode").last()
+        for idx, row in last.iterrows():
+            last_purchase[str(idx)] = row["DocDate"].strftime("%Y-%m-%d")
+
+    # Aggregate item velocity at the item level (across all locations) — the
+    # brand makes one order decision regardless of where the stock will land.
+    item_agg = (
+        item.groupby(["ItemCode", "Brand"], as_index=False)
+        .agg(
+            ItemName=("ItemName", "first") if "ItemName" in item.columns else ("ItemCode", "first"),
+            OnHand=("OnHand", "sum"),
+            onhand_thb=("onhand_thb", "sum"),
+            sold_qty=("sold_qty", "sum"),
+            sold_thb=("sold_thb", "sum"),
+            avg_master_price=("Master Price", "mean"),
+        )
+    )
+    item_agg["avg_daily_qty"] = item_agg["sold_qty"] / float(window_days)
+    item_agg["days_cover"] = item_agg.apply(
+        lambda r: (float(r["OnHand"]) / float(r["avg_daily_qty"]))
+        if float(r["avg_daily_qty"]) > 0
+        else float("inf"),
+        axis=1,
+    )
+
+    brands_out: list[dict[str, Any]] = []
+    grand_total_warnings = 0
+    grand_total_order_thb = 0.0
+
+    for brand_name, brand_df in item_agg.groupby("Brand"):
+        if not brand_name or str(brand_name).strip().lower() in ("unknown", "nan", ""):
+            continue
+        # Top items by revenue in the window
+        top = (
+            brand_df[brand_df["sold_thb"] > 0]
+            .sort_values("sold_thb", ascending=False)
+            .head(top_items_per_brand)
+        )
+        if top.empty:
+            continue
+
+        items_out: list[dict[str, Any]] = []
+        warnings_count = 0
+        brand_order_thb = 0.0
+        for _, r in top.iterrows():
+            dc = float(r["days_cover"])
+            avg_daily = float(r["avg_daily_qty"])
+            onhand = float(r["OnHand"])
+            target_stock = avg_daily * float(target_cover_days)
+            suggested_qty = max(0.0, target_stock - onhand)
+            price = float(r.get("avg_master_price", 0) or 0)
+            suggested_thb = suggested_qty * price
+            is_warning = (not (avg_daily <= 0)) and dc < warning_days_cover
+            if is_warning:
+                warnings_count += 1
+                brand_order_thb += suggested_thb
+            # Severity bucket purely on days_cover
+            if dc < 14:
+                severity = "critical"
+            elif dc < 30:
+                severity = "warning"
+            elif dc < warning_days_cover:
+                severity = "watch"
+            else:
+                severity = "ok"
+            ic = str(r["ItemCode"])
+            items_out.append({
+                "item_code": ic,
+                "item_name": str(r.get("ItemName", "")),
+                "onhand_qty": round(onhand),
+                "onhand_thb": round(float(r["onhand_thb"]), 0),
+                "sold_qty_window": round(float(r["sold_qty"])),
+                "sold_thb_window": round(float(r["sold_thb"]), 0),
+                "avg_daily_qty": round(avg_daily, 2),
+                "days_cover": None if dc == float("inf") else round(dc, 1),
+                "suggested_order_qty": round(suggested_qty),
+                "suggested_order_thb": round(suggested_thb, 0),
+                "severity": severity,
+                "is_warning": is_warning,
+                "last_purchase_date": last_purchase.get(ic),
+            })
+
+        # Brand average days_cover, weighted by current on-hand (items the
+        # business holds more of dominate the planning decision). Items with
+        # zero velocity are excluded — infinite cover would skew the mean.
+        finite = top[top["avg_daily_qty"] > 0]
+        if not finite.empty:
+            weights = finite["OnHand"].clip(lower=1)
+            avg_dc = float(
+                (finite["days_cover"] * weights).sum() / weights.sum()
+            )
+        else:
+            avg_dc = float("inf")
+
+        brands_out.append({
+            "brand": str(brand_name),
+            "top_items_count": len(items_out),
+            "warnings_count": warnings_count,
+            "avg_days_cover": None if avg_dc == float("inf") else round(avg_dc, 1),
+            "total_onhand_thb": round(float(top["onhand_thb"].sum()), 0),
+            "total_sold_thb_window": round(float(top["sold_thb"].sum()), 0),
+            "total_suggested_order_thb": round(brand_order_thb, 0),
+            "items": items_out,
+        })
+        grand_total_warnings += warnings_count
+        grand_total_order_thb += brand_order_thb
+
+    # Sort brands: brands with the most warnings first; tiebreak on lowest
+    # average days cover (most urgent overall).
+    def _brand_sort_key(b):
+        dc = b["avg_days_cover"] if b["avg_days_cover"] is not None else 1e9
+        return (-b["warnings_count"], dc)
+    brands_out.sort(key=_brand_sort_key)
+
+    return {
+        "as_of": pd.Timestamp(as_of_ts).strftime("%Y-%m-%d"),
+        "window_days": window_days,
+        "warning_days_cover": warning_days_cover,
+        "target_cover_days": target_cover_days,
+        "top_items_per_brand": top_items_per_brand,
+        "brands": brands_out,
+        "summary": {
+            "total_brands": len(brands_out),
+            "total_warnings": grand_total_warnings,
+            "total_suggested_order_thb": round(grand_total_order_thb, 0),
+        },
+    }
