@@ -27,6 +27,8 @@ const NAV_GROUPS = [
     items: [
       { href: "/dashboards/inventory-alerts", label: "Inventory Alerts" },
       { href: "/dashboards/stock-allocation", label: "Stock Allocation" },
+      { href: "/dashboards/stock-bot", label: "Stock-Bot" },
+      { href: "/dashboards/planogram", label: "Planogram" },
       { href: "/dashboards/purchase-analytics", label: "Purchase Analytics" },
     ],
   },

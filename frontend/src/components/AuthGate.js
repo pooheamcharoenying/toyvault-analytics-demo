@@ -33,10 +33,10 @@ function LoginScreen({ onSuccess }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-indigo-700 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--nichi-blue)] px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-8">
         <div className="text-center mb-6">
-          <div className="text-2xl font-bold text-indigo-700 tracking-wide">TOYVAULT</div>
+          <div className="text-2xl font-bold text-[var(--nichi-blue)] tracking-wide">TOYVAULT</div>
           <div className="text-sm text-gray-500 mt-1">Business Analytics Dashboard</div>
         </div>
         <form onSubmit={submit} className="space-y-4">
@@ -44,17 +44,17 @@ function LoginScreen({ onSuccess }) {
             <label className="block text-xs font-medium text-gray-600 mb-1">Username</label>
             <input value={username} onChange={(e) => setUsername(e.target.value)} autoFocus
                    autoComplete="username"
-                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-indigo-600 focus:outline-none" />
+                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-[var(--nichi-blue)] focus:outline-none" />
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Password</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
                    autoComplete="current-password"
-                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-indigo-600 focus:outline-none" />
+                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-[var(--nichi-blue)] focus:outline-none" />
           </div>
           {error && <div className="text-sm text-red-600">{error}</div>}
           <button type="submit" disabled={busy || !username || !password}
-                  className="w-full py-2 rounded-lg bg-indigo-700 text-white font-semibold hover:bg-indigo-600 disabled:opacity-40">
+                  className="w-full py-2 rounded-lg bg-[var(--nichi-blue)] text-white font-semibold hover:bg-[var(--nichi-blue-light)] disabled:opacity-40">
             {busy ? "Signing in…" : "Sign In"}
           </button>
         </form>
@@ -94,7 +94,7 @@ export default function AuthGate({ children }) {
   if (status === "checking") {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="w-8 h-8 border-2 border-indigo-700 border-t-transparent rounded-full animate-spin" />
+        <div className="w-8 h-8 border-2 border-[var(--nichi-blue)] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
