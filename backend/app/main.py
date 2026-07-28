@@ -27,6 +27,7 @@ from app.api.routes.admin_tasks import router as admin_tasks_router
 from app.api.routes.file_handling import router as file_handling_router
 from app.api.routes.data_analysis import router as data_analysis_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.planogram import router as planogram_router
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,8 @@ app.include_router(data_analysis_router, prefix="/api", dependencies=[Depends(re
 # Per-user auth endpoints. Behind the same service Basic auth (the BFF sends it);
 # the per-user session check happens inside each route via the X-Session-Token header.
 app.include_router(auth_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
+# Planogram (PAR) endpoints — app-owned shelf minimums in Mongo.
+app.include_router(planogram_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
 
 # ---------- Public health endpoint ----------
 @app.get("/")

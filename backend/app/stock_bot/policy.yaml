@@ -1,0 +1,85 @@
+# Stock Bot — business policy overrides.
+#
+# This file is for *corrections* to the bot's automatic decisions. Everything
+# the bot needs is derived from data (item size from Master Price, location
+# class from revenue percentile, etc.). Use this file only when the data is
+# misleading or when you want to enforce a hard business rule.
+#
+# All sections are optional. The bot ships with all of them empty.
+
+# ---------------------------------------------------------------------------
+# Override the auto-classifier for specific locations.
+# Use this when revenue percentile gives the wrong answer — e.g. a brand-new
+# store that's physically big but hasn't accumulated revenue yet, or a
+# pop-up location with disproportionately huge short-term revenue.
+# Allowed values: flagship | standard | boutique | warehouse
+# ---------------------------------------------------------------------------
+location_class:
+  # D1 = Main Warehouse (Wonderworld bulk stock). NOT a sales point — pure
+  # storage that ships out to shops. Auto-classifier would have called it
+  # `flagship` because it has 14M THB of attributed revenue (from accounting
+  # flows / direct shipments), tricking both warehouse-detection rules
+  # (low revenue: no, ratio: 1.4×). Confirmed by user 2026-05-26.
+  D1: warehouse
+
+  # D1-2 and D7 already auto-classify as warehouse via the high-ratio test;
+  # listed here only so the policy file documents the complete picture.
+  D1-2: warehouse
+  D7: warehouse
+
+# ---------------------------------------------------------------------------
+# Per-(location, item) explicit shelf cap. Wins over everything else.
+# Use sparingly — only when you've measured the actual shelf at that store.
+# ---------------------------------------------------------------------------
+location_shelf_caps: {}
+#   "01":
+#     SV20725: 40
+
+# ---------------------------------------------------------------------------
+# Override the auto-classifier for specific items.
+# Use this when the price tier doesn't reflect physical shelf footprint —
+# e.g. a cheap-but-bulky display stand (price says small, reality is large)
+# or an expensive-but-tiny collectible (price says large, reality is small).
+# Allowed values: small | normal | large | oversized
+# ---------------------------------------------------------------------------
+item_size_class: {}
+#   ITEM001: small
+#   BULKY_STAND_999: large
+
+# ---------------------------------------------------------------------------
+# Manual demand expectations for new SKUs that have no sales history yet.
+# Format: item_code → { whs_code → expected_units_per_day }
+# ---------------------------------------------------------------------------
+expected_velocity_overrides: {}
+#   NEW_SKU_001:
+#     "02": 1.5
+
+# ---------------------------------------------------------------------------
+# Pairs of locations between which the bot must NEVER recommend transfers,
+# even if the math says so. Use for channel-conflict rules (e.g. Robinson
+# and Central are competing channels — moving stock between them creates
+# accounting nightmares).
+# ---------------------------------------------------------------------------
+no_transfer_pairs: []
+#   - ["RB-RAMA9", "CT-RAMA9"]
+
+# ---------------------------------------------------------------------------
+# SKUs the bot must never recommend transferring. Use for items that are
+# being phased out, items in legal dispute, etc.
+# ---------------------------------------------------------------------------
+excluded_items: []
+#   - LEGACY_SKU_007
+
+# ---------------------------------------------------------------------------
+# Force specific WhsCodes into a chosen physical-location group on the
+# Stock Bot dashboard. The auto-derivation strips GP%, T1/T2, discount %,
+# parenthesised dept info, and promo dates from WhsName — which catches
+# 95%+ of cases (e.g. CTMSYN25 / CTMSYN30 / CTMSYN33 all collapse to
+# "M-สยาพารากอน"). Use this section only when the auto rule produces a
+# weird split that you want to override.
+# ---------------------------------------------------------------------------
+physical_location_overrides: {}
+#   CTMSYN25: "Siam Paragon"
+#   CTMSYN33: "Siam Paragon"
+#   C2EVAN18: "Siam Paragon"   # the pop-up event — opt in if you want it
+#                                merged with the main store

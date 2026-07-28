@@ -1261,6 +1261,118 @@ def get_rebalancing_summary(
     return JSONResponse(jsonable_encoder(payload))
 
 
+@router.get(
+    "/stock_bot/transfer_plan",
+    summary="Stock Bot: profit-aware, shelf-cap-aware transfer recommendations grouped by destination",
+)
+def get_stock_bot_transfer_plan(
+    year: Optional[int] = Query(default=None),
+    brand: Optional[str] = Query(default=None),
+):
+    from app.stock_bot.api import generate_transfer_plan
+    df_raw_sale = hf.GLOBAL_DF.get("sale")
+    df_raw_onhand = hf.GLOBAL_DF.get("onhand")
+    df_item_master = hf.GLOBAL_DF.get("master")
+    df_whs_code = hf.GLOBAL_DF.get("whs_code")
+    df_grpo_detail = hf.GLOBAL_DF.get("grpo_detail")
+    if (
+        df_raw_sale is None or df_raw_onhand is None
+        or df_item_master is None or df_whs_code is None
+        or df_grpo_detail is None
+    ):
+        return _data_not_ready()
+    payload = cached_call(
+        "stock_bot_transfer_plan", generate_transfer_plan,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        df_grpo_detail=df_grpo_detail,
+        year=year,
+        brand=brand,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
+@router.get(
+    "/stock_bot/location_summary",
+    summary="Stock Bot: per-item summary at one location (shelf cap + net transfer)",
+)
+def get_stock_bot_location_summary(location: str = Query(...)):
+    """Powers the 'Shelf Cap' + 'Recommended Transfer' columns on the
+    location-detail page's product tables. Walks the cached transfer plan
+    and aggregates per-item info for the requested physical location.
+    """
+    from app.stock_bot.api import (
+        generate_transfer_plan,
+        build_all_item_location_states,
+    )
+    from app.utils.stock_bot_location_summary import (
+        compute_location_summary,
+        enrich_with_caps_from_states,
+        enrich_with_d1_stock,
+    )
+
+    df_raw_sale = hf.GLOBAL_DF.get("sale")
+    df_raw_onhand = hf.GLOBAL_DF.get("onhand")
+    df_item_master = hf.GLOBAL_DF.get("master")
+    df_whs_code = hf.GLOBAL_DF.get("whs_code")
+    df_grpo_detail = hf.GLOBAL_DF.get("grpo_detail")
+    if (
+        df_raw_sale is None or df_raw_onhand is None
+        or df_item_master is None or df_whs_code is None
+        or df_grpo_detail is None
+    ):
+        return _data_not_ready()
+
+    # 1. Cached transfer plan — gives us net_transfer per item (only for
+    #    items the bot actually moved).
+    plan = cached_call(
+        "stock_bot_transfer_plan", generate_transfer_plan,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        df_grpo_detail=df_grpo_detail,
+        year=None,
+        brand=None,
+    )
+
+    # 2. Cached pre-planner states — gives us shelf_cap for EVERY (item,
+    #    location) the bot considered, including items the planner had
+    #    no proposal for. Separate cache key from the plan so each is
+    #    recomputed only when its dependencies change.
+    bundle = cached_call(
+        "stock_bot_all_item_location_states", build_all_item_location_states,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        df_grpo_detail=df_grpo_detail,
+        year=None,
+        brand=None,
+    )
+    states = bundle.get("states") or []
+    policy = bundle.get("policy") or {}
+    policy_overrides = policy.get("physical_location_overrides") or {}
+
+    # 3. Normalise the URL-provided location name to the bot's convention.
+    from app.stock_bot.output.physical_location import derive_physical_location
+    bot_location = derive_physical_location(location, None, policy_overrides)
+
+    # 4. Aggregate proposals → per-item net_transfer (search by bot's name)
+    summary = compute_location_summary(plan, bot_location, policy=policy)
+    # 5. Layer in shelf_cap for items WITHOUT a proposal
+    summary = enrich_with_caps_from_states(
+        summary, states, bot_location, policy_overrides=policy_overrides,
+    )
+    # 6. Layer in d1_stock from raw on-hand
+    summary = enrich_with_d1_stock(summary, df_raw_onhand)
+    # Restore the original (user-facing) location name in the response.
+    summary["location"] = location
+    return JSONResponse(jsonable_encoder(summary))
+
+
 # ---------------------------------------------------------------------------
 # Period Comparison Reports (OBJ-10)
 # ---------------------------------------------------------------------------
