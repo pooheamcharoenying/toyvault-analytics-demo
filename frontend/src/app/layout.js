@@ -1,5 +1,5 @@
 import "./globals.css";
-import PasswordGate from "@/components/PasswordGate";
+import AuthGate from "@/components/AuthGate";
 import DataStatusBar from "@/components/DataStatusBar";
 import DataFreshnessBanner from "@/components/DataFreshnessBanner";
 import Navbar from "@/components/Navbar";
@@ -13,12 +13,12 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body>
-        <PasswordGate>
+        <AuthGate>
           <Navbar />
           <DataFreshnessBanner />
           <DataStatusBar />
           {children}
-        </PasswordGate>
+        </AuthGate>
       </body>
     </html>
   );

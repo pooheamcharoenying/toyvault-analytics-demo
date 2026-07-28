@@ -22,6 +22,25 @@ class Settings(BaseSettings):
     DO_SPACE_NAME: str = "nichiworld"
     DO_REGION: str = "sgp1"
 
+    # --- MongoDB (app-owned collections only: users, planogram, assistant threads,
+    #     LINE bindings). NOT the analytics data source — that stays Excel/Spaces.
+    #     Supply MONGODB_URI directly (Railway), or MONGODB_USER_ME +
+    #     MONGODB_PASSWORD_ME + MONGODB_HOST for local dev (assembled in mongo_store).
+    #     Everything is scoped to MONGODB_DB; the cluster is shared, isolation is by
+    #     database name. Unset => Mongo-backed features are disabled. Never commit. ---
+    MONGODB_URI: str = ""
+    MONGODB_USER_ME: str = ""
+    MONGODB_PASSWORD_ME: str = ""
+    MONGODB_HOST: str = ""
+    MONGODB_DB: str = "toyvaultdemo"
+
+    # --- Per-user auth (login) ---
+    # Passwords are bcrypt-hashed in the `users` collection; sessions are signed
+    # tokens (HMAC-SHA256). SESSION_SECRET signs those tokens — SET a long random
+    # value in production; if empty it falls back to a stable per-deployment secret.
+    SESSION_SECRET: str = ""
+    SESSION_TTL_HOURS: int = 24
+
     # --- CORS ---
     # Comma-separated list of allowed origins (e.g. "https://myapp.up.railway.app,http://localhost:3000")
     # Use "*" to allow any origin (only in public demo mode).

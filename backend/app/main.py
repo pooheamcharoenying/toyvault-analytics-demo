@@ -26,6 +26,7 @@ from app.utils import data_client
 from app.api.routes.admin_tasks import router as admin_tasks_router
 from app.api.routes.file_handling import router as file_handling_router
 from app.api.routes.data_analysis import router as data_analysis_router
+from app.api.routes.auth import router as auth_router
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,9 @@ app.add_middleware(ResponseTimeCacheMiddleware)
 app.include_router(admin_tasks_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
 app.include_router(file_handling_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
 app.include_router(data_analysis_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
+# Per-user auth endpoints. Behind the same service Basic auth (the BFF sends it);
+# the per-user session check happens inside each route via the X-Session-Token header.
+app.include_router(auth_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
 
 # ---------- Public health endpoint ----------
 @app.get("/")
