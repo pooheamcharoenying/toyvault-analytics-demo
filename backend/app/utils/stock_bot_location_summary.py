@@ -28,7 +28,7 @@ from app.stock_bot.output.physical_location import derive_physical_location
 # WhsCode prefixes / codes that count as the D1 main warehouse. Keep this
 # broad so the column populates regardless of which exact SAP code the
 # data uses (D1, 01, etc).
-_D1_WHS_CODES = {"D1", "01"}
+_D1_WHS_CODES = {"D1", "01", "W1"}
 _D1_NAME_HINTS = ("main warehouse", "warehouse d1", "d1 main")
 
 
@@ -44,7 +44,7 @@ def compute_location_summary(
         plan: The full response from ``generate_transfer_plan`` (the dict
             with keys ``status``, ``destination_groups``, ``summary``, etc.).
         location: The consolidated / physical location name as it appears
-            on the location-detail page (e.g. ``"M-เอ็มโพเรียม"``).
+            on the location-detail page (e.g. ``"M-Riverpoint"``).
         policy: Optional policy dict — passed to ``derive_physical_location``
             so any ``physical_location_overrides`` in policy.yaml are honoured
             when matching transfers' source whs codes to this location.
@@ -52,7 +52,7 @@ def compute_location_summary(
     Returns:
         Dict shaped:
             {
-                "location": "M-เอ็มโพเรียม",
+                "location": "M-Riverpoint",
                 "items": {
                     "<item_code>": {
                         "shelf_cap": int | None,
@@ -148,6 +148,13 @@ def _new_entry() -> dict:
         "transfers_out_count": 0,
         "d1_stock": None,
         "monthly_velocity": None,   # units/mo at this location (recent 90d)
+        "ai_suggested_planogram": None,   # demand-ceiling shelf target (this month)
+        "ai_recommended_transfer": None,  # top-up to the AI planogram from D1
+        "ai_peak_planogram": None,
+        "ai_peak_month": None,
+        "ai_status": None,
+        "ai_confidence": None,
+        "current_planogram": None,   # human-set min_qty (planogram page); None = unset
     }
 
 
@@ -221,6 +228,65 @@ def enrich_with_caps_from_states(
         entry = items.setdefault(ic, _new_entry())
         entry["monthly_velocity"] = round(velo, 1)
 
+    return summary
+
+
+# ---------------------------------------------------------------------------
+# AI Suggested Planogram enrichment
+# ---------------------------------------------------------------------------
+
+def enrich_with_ai_planogram(summary: Dict[str, Any], ai_map: Dict[str, dict]) -> Dict[str, Any]:
+    """Overlay the AI Suggested Planogram (current-month target) + peak/status/
+    confidence per item. ``ai_map`` = {item_code: {ai fields incl current_onhand}}.
+
+    The AI covers every item at a managed-shelf location, so this also *adds*
+    items the stock-bot pipeline had no signal for. The recommended transfer is
+    filled in later by :func:`compute_ai_transfers` (needs d1_stock first)."""
+    if not summary or summary.get("status") != "ok" or not ai_map:
+        return summary
+    items = summary.setdefault("items", {})
+    for ic, a in ai_map.items():
+        entry = items.setdefault(str(ic), _new_entry())
+        entry["ai_suggested_planogram"] = a.get("ai_suggested_planogram")
+        entry["ai_peak_planogram"] = a.get("ai_peak_planogram")
+        entry["ai_peak_month"] = a.get("ai_peak_month")
+        entry["ai_status"] = a.get("ai_status")
+        entry["ai_confidence"] = a.get("ai_confidence")
+        entry["_ai_onhand"] = a.get("current_onhand") or 0   # internal; popped later
+    return summary
+
+
+def enrich_with_current_planogram(summary: Dict[str, Any], saved: Dict[str, int]) -> Dict[str, Any]:
+    """Overlay the human-set planogram minimum (``min_qty``) per item so the
+    location page can show *set vs AI-suggested* side by side. ``saved`` =
+    {item_code: min_qty} for items with a planogram set (from planogram_par.load).
+    Items not in ``saved`` keep ``current_planogram = None`` (rendered as "—")."""
+    if not summary or summary.get("status") != "ok" or not saved:
+        return summary
+    items = summary.setdefault("items", {})
+    for ic, qty in saved.items():
+        entry = items.setdefault(str(ic), _new_entry())
+        entry["current_planogram"] = int(qty)
+    return summary
+
+
+def compute_ai_transfers(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """AI Recommended Transfer = top up to the AI Suggested Planogram from D1.
+
+    ``gap = planogram − on-hand``. Inbound (gap>0) is capped by D1 stock (can't
+    move more than D1 has); overstock (gap<0) is shown as a negative (transfer
+    out). Runs AFTER :func:`enrich_with_d1_stock` so ``d1_stock`` is known."""
+    if not summary or summary.get("status") != "ok":
+        return summary
+    for entry in summary.get("items", {}).values():
+        plano = entry.get("ai_suggested_planogram")
+        onhand = entry.pop("_ai_onhand", 0)
+        if plano is None:
+            entry.setdefault("ai_recommended_transfer", None)
+            continue
+        d1 = int(entry.get("d1_stock") or 0)
+        gap = int(round(plano - onhand))
+        entry["ai_recommended_transfer"] = min(gap, d1) if gap > 0 else gap
     return summary
 
 

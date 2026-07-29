@@ -1311,7 +1311,12 @@ def get_stock_bot_location_summary(location: str = Query(...)):
         compute_location_summary,
         enrich_with_caps_from_states,
         enrich_with_d1_stock,
+        enrich_with_ai_planogram,
+        enrich_with_current_planogram,
+        compute_ai_transfers,
     )
+    from app.utils.ai_planogram_service import ai_for_location
+    from app.utils import planogram_par as pp
 
     df_raw_sale = hf.GLOBAL_DF.get("sale")
     df_raw_onhand = hf.GLOBAL_DF.get("onhand")
@@ -1366,10 +1371,26 @@ def get_stock_bot_location_summary(location: str = Query(...)):
     summary = enrich_with_caps_from_states(
         summary, states, bot_location, policy_overrides=policy_overrides,
     )
-    # 6. Layer in d1_stock from raw on-hand
+    # 6. Overlay the AI Suggested Planogram (keyed by the original location
+    #    name, matching the demand engine's consolidated-location keys). Adds
+    #    every managed-shelf item and drives the AI Recommended Transfer below.
+    try:
+        ai_map = ai_for_location(location)
+    except Exception:
+        ai_map = {}
+    summary = enrich_with_ai_planogram(summary, ai_map)
+    # 7. Overlay the human-set planogram minimum (Current Planogram).
+    try:
+        summary = enrich_with_current_planogram(summary, pp.load(location))
+    except Exception:
+        pass
+    # 8. Layer in d1_stock from raw on-hand (covers the AI-added items too).
     summary = enrich_with_d1_stock(summary, df_raw_onhand)
+    # 9. AI Recommended Transfer = top up to the AI planogram from D1.
+    summary = compute_ai_transfers(summary)
     # Restore the original (user-facing) location name in the response.
     summary["location"] = location
+    summary["ai_available"] = bool(ai_map)
     return JSONResponse(jsonable_encoder(summary))
 
 
