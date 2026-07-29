@@ -1,11 +1,12 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import ErrorBanner from "@/components/ErrorBanner";
 import InfoTooltip, { METRIC_TOOLTIPS } from "@/components/InfoTooltip";
 import AbcdeBadge from "@/components/AbcdeBadge";
+import ChartDownloadToolbar from "@/components/ChartDownloadToolbar";
 import RecommendationPanel from "@/components/RecommendationCard";
 import api, { isAbortError } from "@/utils/api";
 import { downloadCsvFromObjects } from "@/utils/csvExport";
@@ -37,6 +38,8 @@ export default function ItemDetailPage() {
   const [selectedYears, setSelectedYears] = useState([CY]);
   const [trendData, setTrendData] = useState(null);
   const [showAllBars, setShowAllBars] = useState(false);
+  const monthlyTrendRef = useRef(null);
+  const stockDistRef = useRef(null);
 
   const toggleYear = (y) => {
     setSelectedYears((prev) => {
@@ -315,14 +318,22 @@ export default function ItemDetailPage() {
               {/* Monthly Sales & On-Hand Trend */}
               {trendChartData.length > 0 && (
                 <div className="bg-white rounded-xl shadow-md p-6">
-                  <h2 className="text-lg font-semibold text-gray-800 mb-2">
-                    Monthly Sales{hasOnhandTrend ? " & On-Hand" : ""} — {data.item_info.item_code} ({yearLabel})
-                  </h2>
+                  <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+                    <h2 className="text-lg font-semibold text-gray-800">
+                      Monthly Sales{hasOnhandTrend ? " & On-Hand" : ""} — {data.item_info.item_code} ({yearLabel})
+                    </h2>
+                    <ChartDownloadToolbar
+                      data={trendChartData}
+                      filenameBase={`item_${data.item_info.item_code}_monthly_${yearLabel.replace(/, /g, "_")}`}
+                      chartRef={monthlyTrendRef}
+                    />
+                  </div>
                   {itemTrendPartialNote && (
                     <p className="text-xs text-amber-700 mb-3">
                       ⓘ {itemTrendPartialNote} — shown as full-month running-rate projection for fair comparison
                     </p>
                   )}
+                  <div ref={monthlyTrendRef}>
                   <ResponsiveContainer width="100%" height={320}>
                     <LineChart data={trendChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" />
@@ -339,6 +350,7 @@ export default function ItemDetailPage() {
                       )}
                     </LineChart>
                   </ResponsiveContainer>
+                  </div>
                   {hasOnhandTrend && (
                     <p className="text-xs text-gray-400 mt-2">
                       On-Hand Qty (green dashed) is reconstructed backwards from current stock using sales, purchases, and transfers.
@@ -350,14 +362,23 @@ export default function ItemDetailPage() {
               {/* Bar chart — On-Hand vs. Lifetime Sold by Location */}
               {allChartData.length > 0 && (
                 <div className="bg-white rounded-xl shadow-md p-6">
-                  <h2 className="text-lg font-semibold text-gray-800 mb-4">
-                    Stock Distribution vs. Sales by Location ({yearLabel})
-                    <InfoTooltip text={METRIC_TOOLTIPS.item.onhand_vs_sold} size="md" />
-                  </h2>
+                  <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+                    <h2 className="text-lg font-semibold text-gray-800">
+                      Stock Distribution vs. Sales by Location ({yearLabel})
+                      <InfoTooltip text={METRIC_TOOLTIPS.item.onhand_vs_sold} size="md" />
+                    </h2>
+                    <ChartDownloadToolbar
+                      data={allChartData}
+                      filenameBase={`item_${data.item_info.item_code}_stock_vs_sales_by_location_${yearLabel.replace(/, /g, "_")}`}
+                      chartRef={stockDistRef}
+                      csvColumns={["fullName", "On-Hand Qty", "Sold Qty"]}
+                    />
+                  </div>
                   <p className="text-sm text-gray-500 mb-4">
                     Compare where stock is currently held (blue) against where it has historically sold (yellow).
                     Locations with high stock but low sales are transfer-out candidates.
                   </p>
+                  <div ref={stockDistRef}>
                   <ResponsiveContainer width="100%" height={Math.max(300, chartData.length * 40)}>
                     <BarChart
                       data={chartData}
@@ -383,6 +404,7 @@ export default function ItemDetailPage() {
                       <Bar dataKey="Sold Qty" fill="var(--nichi-yellow)" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
+                  </div>
                   {hasMoreBars && (
                     <div className="mt-3 text-center">
                       <button

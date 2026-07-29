@@ -1,10 +1,10 @@
 """Derive a single physical-location key for a SAP warehouse entry.
 
-Background: one physical store like Siam Paragon is split across many
+Background: one physical store like Grandway Riverside is split across many
 SAP WhsCodes in this data — different commission tiers (GP25, GP33),
 different consignment vs credit arrangements, different departments
 (Art Toy), promotional pop-ups, etc. A manager planning the day's
-transfers thinks "what's going to Siam Paragon today?" — not "what's
+transfers thinks "what's going to Grandway Riverside today?" — not "what's
 going to CTMSYN25, CTMSYN30, CTMSYN33, ...". The bot's destination
 grouping must reflect that.
 
@@ -23,8 +23,8 @@ edge case the auto-derivation gets wrong):
      normalise to the same key get grouped together.
 
 Channel prefix (`M-`, `CT-`, `TRU`, `RO-`) is KEPT — it distinguishes
-different tenants at the same mall (The Mall vs Central vs TRU at
-Central World are separate tenants in separate retail spaces and should
+different tenants at the same mall (Plaza Group vs Grandway vs KidZone at
+Grandway Riverside are separate tenants in separate retail spaces and should
 not be merged).
 
 Pure function. No pandas, no I/O. Trivially unit-testable.
@@ -73,7 +73,7 @@ def derive_physical_location(
     """Return the physical-location grouping key for a SAP warehouse entry.
 
     Args:
-        whs_name: The SAP WhsName (e.g. ``"M-สยาพารากอน T1 GP30"``).
+        whs_name: The SAP WhsName (e.g. ``"M-Grandway Riverside T1 GP30"``).
         whs_code: The WhsCode (used to look up policy overrides).
         policy_overrides: Dict from ``policy.yaml.physical_location_overrides``
             mapping ``whs_code → physical_location_label``.

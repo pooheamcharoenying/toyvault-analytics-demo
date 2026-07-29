@@ -10,7 +10,7 @@ this tiered fallback strategy:
 
   Tier 1 (authoritative): Item Master.GroupName
   Tier 2 (high-confidence): Sale.Brand per item (taking the mode across rows)
-  Tier 3 (inference):      Item code prefix mapping (KM -> keepplay, etc.)
+  Tier 3 (inference):      Item code prefix mapping (prefix -> brand)
 
 Tier 1 is never overridden. Tier 2 kicks in for items absent from the master
 but with Brand populated on their sales lines. Tier 3 is inference-based and
@@ -27,47 +27,11 @@ from typing import Optional
 import pandas as pd
 
 
-# Item-code prefix -> brand. Built by inspecting the Item Master empirically
-# (prefixes with >=80% brand purity across their items) plus known prefixes
-# from the Strategic Assessment document (KM, NS, BK) for items that are
-# missing from the current master but have well-known brand lineages.
-#
-# ORDER MATTERS: longer prefixes first. A code like "QMPKA..." must match
-# "QMPKA" before falling through to "QM" (if we had one).
-PREFIX_TO_BRAND: dict[str, str] = {
-    # Longer-first variants
-    "JSPKZC": "Johnson",
-    "QMPKK": "keepplay",
-    "QMSRK": "keepplay",
-    "QMSCK": "keepplay",
-    "QMPKB": "keepplay",
-    "QMPKA": "keepplay",
-    "QMNRK": "keepplay",
-    "QMGK": "keepplay",
-    "QMPK": "keepplay",
-    "SRSR": "Sticki Rolls",
-    "MJOP": "Mighty Jaxx",
-    "AFP": "ALL FOR PLAY",
-    "BKS": "Blokees",
-    "LLM": "Miniverse",
-    "LLC": "Creative Chef",
-    "ROR": "ROI",
-    "SVD": "Silverlit",
-    "SVR": "Robocar Poli",
-    "NS": "Miniverse",      # MGA/Miniverse — Na Na Na Surprise line (per assessment)
-    "ND": "NADO Continue",
-    "KM": "keepplay",       # Kimmon line (per assessment)
-    "BK": "Blokees",        # Blokees short prefix (per assessment)
-    "BO": "BANBO",
-    "LL": "L.O.L Surprise",
-    "MN": "MINIX",
-    "PN": "Pinvi",
-    "SK": "siku",
-    "SV": "Silverlit",
-    "SW": "Super Wings",
-    "TR": "TRC (miscellaneous)",  # Prefix TRC* seen in sample, likely accessories
-    "RB": "Robocar Poli",
-}
+# Item-code prefix -> brand, for Tier-3 inference of items that are missing from
+# the Item Master. In this anonymized demo the Item Master coverage is complete
+# (every item carries a brand via Tier-1/Tier-2), so Tier-3 never fires; the
+# prefix map is intentionally empty here.
+PREFIX_TO_BRAND: dict[str, str] = {}
 
 
 _PREFIX_RE = re.compile(r"^([A-Z]+)")

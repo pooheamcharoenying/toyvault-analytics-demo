@@ -176,6 +176,56 @@ async def line_webhook(request: Request, background_tasks: BackgroundTasks,
     return {"ok": True}
 
 
+def _session_user(x_session_token: str) -> str:
+    p = tokens.verify(x_session_token or "")
+    if not p:
+        raise HTTPException(status_code=401, detail="Not signed in.")
+    return p["sub"]
+
+
+@api_router.get("/line/status", summary="Whether the signed-in user has a LINE account connected")
+def line_status(x_session_token: str = Header(default="")) -> dict:
+    user = _session_user(x_session_token)
+    b = bindings.get_binding_for_user(user)
+    if not b:
+        return {"linked": False}
+    line_uid = b["_id"]
+    name = b.get("display_name")
+    picture = b.get("picture_url")
+    if not name:   # older binding with no cached profile — fetch once and backfill
+        prof = client.get_profile(line_uid)
+        if prof:
+            name = prof.get("displayName") or name
+            picture = prof.get("pictureUrl") or picture
+            bindings.set_profile(line_uid, name, picture)
+    bound = b.get("bound_at")
+    return {"linked": True,
+            "line_user_id": line_uid,
+            "display_name": name,
+            "picture_url": picture,
+            "bound_at": bound.isoformat() if hasattr(bound, "isoformat") else bound}
+
+
+@api_router.get("/line/bot_info", summary="Public identity of the AI Assist LINE bot (name, ID, QR)")
+def line_bot_info(x_session_token: str = Header(default="")) -> dict:
+    _session_user(x_session_token)
+    info = client.get_bot_info() or {}
+    basic_id = info.get("basicId") or "@toyvault"   # fallback if LINE is unreachable
+    return {
+        "name": info.get("displayName") or "ToyVault AI Assist",
+        "basic_id": basic_id,
+        "picture_url": info.get("pictureUrl"),
+        "add_url": f"https://line.me/R/ti/p/{basic_id}",
+    }
+
+
+@api_router.post("/line/disconnect", summary="Disconnect the user's LINE account")
+def line_disconnect(x_session_token: str = Header(default="")) -> dict:
+    user = _session_user(x_session_token)
+    removed = bindings.unbind_user(user)
+    return {"linked": False, "removed": removed}
+
+
 @api_router.post("/line/link_code", summary="Generate a one-time LINE link code")
 def line_link_code(x_session_token: str = Header(default="")) -> dict:
     p = tokens.verify(x_session_token or "")

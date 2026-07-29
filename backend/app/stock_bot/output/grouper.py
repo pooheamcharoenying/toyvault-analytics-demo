@@ -1,6 +1,6 @@
 """Group TransferProposals by **physical location** for the UI.
 
-One physical store like Siam Paragon is split across many SAP WhsCodes
+One physical store like Grandway Riverside is split across many SAP WhsCodes
 (GP25, GP33, Art Toy department, etc.). The bot's destination cards group
 by the physical location so a manager can review the whole plan for that
 store at once. Each transfer row still shows its exact SAP-code destination
@@ -24,7 +24,7 @@ def group_by_destination(
     """Group proposals by destination *physical* location.
 
     Two SAP WhsCodes that normalise to the same physical_location key
-    (e.g. ``CTMSYN30`` and ``CTMSYN33`` → ``"M-สยาพารากอน"``) are merged
+    (e.g. ``CTMSYN30`` and ``CTMSYN33`` → ``"M-Grandway Riverside"``) are merged
     into one group. The per-transfer SAP detail is preserved on each row.
 
     Groups are sorted by total expected profit uplift descending.

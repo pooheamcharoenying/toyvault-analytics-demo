@@ -56,7 +56,7 @@ CHANGES = {
              "columns because top_brands happened to be the largest list).",
     "1.0.3": "Tolerant location matching: location lookups now resolve near-miss "
              "spellings (exact → normalized → fuzzy) so a one-character typo like "
-             "'M-สยามพารากอน' vs the stored 'M-สยาพารากอน' finds the branch instead of "
+             "'M-Grandway Rivrside' vs the stored 'M-Grandway Riverside' finds the branch instead of "
              "wrongly reporting 'no data'.",
     "1.0.2": "Context-overflow safety net: estimate tokens and TRIM to fit before "
              "every model call (drop oldest history, shrink oldest tool results with "

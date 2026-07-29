@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer,
@@ -26,6 +26,8 @@ import StatusBadge from "@/components/StatusBadge";
 import AbcdeBadge from "@/components/AbcdeBadge";
 import KpiCard from "@/components/KpiCard";
 import InfoTooltip, { METRIC_TOOLTIPS } from "@/components/InfoTooltip";
+import GranularityToggle from "@/components/GranularityToggle";
+import ChartDownloadToolbar from "@/components/ChartDownloadToolbar";
 import { fmtThb, fmtQty, fmtPct, fmtRatio, fmtDays } from "@/utils/formatters";
 import { downloadCsv, downloadCsvFromObjects } from "@/utils/csvExport";
 
@@ -73,6 +75,10 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [trendData, setTrendData] = useState(null);
+  const [granularity, setGranularity] = useState("monthly");
+  const trendChartRef = useRef(null);
+  const healthChartRef = useRef(null);
+  const scatterChartRef = useRef(null);
 
   const loadPerf = useCallback((years, signal) => {
     setLoading(true);
@@ -88,9 +94,10 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
       .finally(() => setLoading(false));
   }, []);
 
-  const loadTrend = useCallback((years, signal) => {
+  const loadTrend = useCallback((years, signal, gran) => {
     const qs = new URLSearchParams();
     qs.set("top_n", "10");
+    qs.set("granularity", gran);
     years.forEach((y) => qs.append("year_list", String(y)));
     api.get(`/api/location_trends?${qs.toString()}`, { signal })
       .then((res) => { if (res.data?.message !== "data not ready") setTrendData(res.data); })
@@ -100,9 +107,9 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
   useEffect(() => {
     const ctrl = new AbortController();
     loadPerf(selectedYears, ctrl.signal);
-    loadTrend(selectedYears, ctrl.signal);
+    loadTrend(selectedYears, ctrl.signal, granularity);
     return () => ctrl.abort();
-  }, [loadPerf, loadTrend, selectedYears]);
+  }, [loadPerf, loadTrend, selectedYears, granularity]);
 
   const trendChartData = useMemo(() => {
     if (!trendData?.trends?.length) return [];
@@ -223,7 +230,18 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
       {/* Monthly revenue trend */}
       {trendChartData.length > 0 && (
         <div className="bg-white rounded-lg shadow border p-4">
-          <h2 className="text-base font-semibold text-gray-800 mb-3">Monthly Revenue by Top Locations — {yearLabel}</h2>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <h2 className="text-base font-semibold text-gray-800">{granularity === "weekly" ? "Weekly" : "Monthly"} Revenue by Top Locations — {yearLabel}</h2>
+            <div className="flex items-center gap-3 flex-wrap">
+              <GranularityToggle value={granularity} onChange={setGranularity} />
+              <ChartDownloadToolbar
+                data={trendChartData}
+                filenameBase={`locations_top10_${granularity}_trend_${yearLabel.replace(/, /g, "_")}`}
+                chartRef={trendChartRef}
+              />
+            </div>
+          </div>
+          <div ref={trendChartRef}>
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={trendChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200" />
@@ -237,14 +255,26 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
               ))}
             </LineChart>
           </ResponsiveContainer>
+          </div>
         </div>
       )}
 
       {/* Charts row: Health + Scatter */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-lg shadow border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">Health Score (0-100)</h3>
-          <p className="text-xs text-gray-400 mb-2">Weighted: Efficiency 40%, Sell-Through 25%, Low Dead Stock 20%, Lean Inventory 15%</p>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-1">Health Score (0-100)</h3>
+              <p className="text-xs text-gray-400 mb-2">Weighted: Efficiency 40%, Sell-Through 25%, Low Dead Stock 20%, Lean Inventory 15%</p>
+            </div>
+            <ChartDownloadToolbar
+              data={healthChartData}
+              filenameBase={`locations_health_scores_${yearLabel.replace(/, /g, "_")}`}
+              chartRef={healthChartRef}
+              csvColumns={["fullName", "value", "status"]}
+            />
+          </div>
+          <div ref={healthChartRef}>
           <ResponsiveContainer width="100%" height={350}>
             <BarChart data={healthChartData} layout="vertical" margin={{ left: 10, right: 20 }}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -259,10 +289,20 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          </div>
         </div>
 
         <div className="bg-white rounded-lg shadow border p-4">
-          <h3 className="text-sm font-semibold text-gray-700 mb-1">Inventory vs Revenue (above trend = efficient)</h3>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+            <h3 className="text-sm font-semibold text-gray-700">Inventory vs Revenue (above trend = efficient)</h3>
+            <ChartDownloadToolbar
+              data={scatterData}
+              filenameBase={`locations_inventory_vs_revenue_${yearLabel.replace(/, /g, "_")}`}
+              chartRef={scatterChartRef}
+              csvColumns={["name", "x", "y", "efficiency", "status"]}
+            />
+          </div>
+          <div ref={scatterChartRef}>
           <ResponsiveContainer width="100%" height={350}>
             <ScatterChart margin={{ top: 10, right: 20, bottom: 10, left: 10 }}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -288,6 +328,7 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
               </Scatter>
             </ScatterChart>
           </ResponsiveContainer>
+          </div>
         </div>
       </div>
 
@@ -310,6 +351,8 @@ function InvestmentTab({ selectedYears, toggleYear }) {
   const [targetDays, setTargetDays] = useState("90");
   const [showAllRevChart, setShowAllRevChart] = useState(false);
   const [showAllInvChart, setShowAllInvChart] = useState(false);
+  const revChartRef = useRef(null);
+  const invChartRef = useRef(null);
 
   const fetchData = useCallback(async (signal) => {
     setLoading(true); setError(null);
@@ -404,8 +447,19 @@ function InvestmentTab({ selectedYears, toggleYear }) {
 
       {/* Revenue vs On-Hand */}
       <div className="bg-white rounded-lg shadow border p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-1">Revenue vs Inventory by Location</h3>
-        <p className="text-xs text-gray-400 mb-3">Sorted by efficiency. Revenue bar &gt; on-hand bar = efficient.</p>
+        <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700">Revenue vs Inventory by Location</h3>
+            <p className="text-xs text-gray-400 mb-3">Sorted by efficiency. Revenue bar &gt; on-hand bar = efficient.</p>
+          </div>
+          <ChartDownloadToolbar
+            data={allRevData}
+            filenameBase={`locations_revenue_vs_inventory_${selectedYears.join("_")}`}
+            chartRef={revChartRef}
+            csvColumns={["fullName", "revenue", "onhand", "efficiency"]}
+          />
+        </div>
+        <div ref={revChartRef}>
         <ResponsiveContainer width="100%" height={Math.max(400, revChartData.length * 32)}>
           <BarChart data={revChartData} layout="vertical" margin={{ left: 10, right: 20 }}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -425,6 +479,7 @@ function InvestmentTab({ selectedYears, toggleYear }) {
             <Bar dataKey="onhand" name="On-Hand (THB)" fill="#FFD200" />
           </BarChart>
         </ResponsiveContainer>
+        </div>
         {allRevData.length > REV_DEFAULT && (
           <div className="mt-3 text-center">
             <button onClick={() => setShowAllRevChart(!showAllRevChart)}
@@ -437,7 +492,16 @@ function InvestmentTab({ selectedYears, toggleYear }) {
 
       {/* Actual vs Target */}
       <div className="bg-white rounded-lg shadow border p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-1">Actual vs Target Inventory ({summary.target_cover_days}-day cover)</h3>
+        <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+          <h3 className="text-sm font-semibold text-gray-700">Actual vs Target Inventory ({summary.target_cover_days}-day cover)</h3>
+          <ChartDownloadToolbar
+            data={allInvChartData}
+            filenameBase={`locations_actual_vs_target_${selectedYears.join("_")}`}
+            chartRef={invChartRef}
+            csvColumns={["fullName", "actual", "target", "gap", "status"]}
+          />
+        </div>
+        <div ref={invChartRef}>
         <ResponsiveContainer width="100%" height={Math.max(300, invChartData.length * 28)}>
           <BarChart data={invChartData} layout="vertical" margin={{ left: 10, right: 20 }}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -459,6 +523,7 @@ function InvestmentTab({ selectedYears, toggleYear }) {
             <Bar dataKey="target" name="Target On-Hand" fill="#94a3b8" />
           </BarChart>
         </ResponsiveContainer>
+        </div>
         {allInvChartData.length > INV_DEFAULT && (
           <div className="mt-3 text-center">
             <button onClick={() => setShowAllInvChart(!showAllInvChart)}
@@ -490,12 +555,17 @@ function TrendsTab({ selectedYears, toggleYear, locationNames }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedLocs, setSelectedLocs] = useState([]);
+  const [granularity, setGranularity] = useState("monthly");
+  const trendChartRef = useRef(null);
+  const top10ChartRef = useRef(null);
+  const bottom10ChartRef = useRef(null);
 
-  const fetchTrends = useCallback(async (years, signal) => {
+  const fetchTrends = useCallback(async (years, signal, gran) => {
     setLoading(true); setError(null);
     try {
       const qs = new URLSearchParams();
       qs.set("top_n", "50");
+      qs.set("granularity", gran);
       years.forEach((y) => qs.append("year_list", String(y)));
       const res = await api.get(`/api/location_trends?${qs.toString()}`, { signal });
       setAllData(res.data);
@@ -505,12 +575,12 @@ function TrendsTab({ selectedYears, toggleYear, locationNames }) {
 
   useEffect(() => {
     const ctrl = new AbortController();
-    fetchTrends(selectedYears, ctrl.signal);
+    fetchTrends(selectedYears, ctrl.signal, granularity);
     return () => ctrl.abort();
-  }, [fetchTrends, selectedYears]);
+  }, [fetchTrends, selectedYears, granularity]);
 
   if (loading) return <LoadingSpinner message="Loading trends..." />;
-  if (error) return <ErrorBanner message={error} onRetry={() => fetchTrends(selectedYears)} />;
+  if (error) return <ErrorBanner message={error} onRetry={() => fetchTrends(selectedYears, undefined, granularity)} />;
   if (!allData?.trends?.length) return <div className="text-gray-400 text-center py-8">No trend data</div>;
 
   const filteredTrends = selectedLocs.length > 0
@@ -583,10 +653,21 @@ function TrendsTab({ selectedYears, toggleYear, locationNames }) {
 
       {/* Trend line chart */}
       <div className="bg-white rounded-lg shadow border p-4">
-        <h3 className="text-sm font-semibold text-gray-700 mb-3">
-          Monthly Revenue Trends — {yearLabel}
-          {selectedLocs.length > 0 && <span className="text-xs font-normal text-gray-400 ml-2">({selectedLocs.length} compared)</span>}
-        </h3>
+        <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+          <h3 className="text-sm font-semibold text-gray-700">
+            {granularity === "weekly" ? "Weekly" : "Monthly"} Revenue Trends — {yearLabel}
+            {selectedLocs.length > 0 && <span className="text-xs font-normal text-gray-400 ml-2">({selectedLocs.length} compared)</span>}
+          </h3>
+          <div className="flex items-center gap-3 flex-wrap">
+            <GranularityToggle value={granularity} onChange={setGranularity} />
+            <ChartDownloadToolbar
+              data={chartData}
+              filenameBase={`locations_trends_${granularity}_${yearLabel.replace(/, /g, "_")}`}
+              chartRef={trendChartRef}
+            />
+          </div>
+        </div>
+        <div ref={trendChartRef}>
         <ResponsiveContainer width="100%" height={400}>
           <LineChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 10 }}>
             <CartesianGrid strokeDasharray="3 3" />
@@ -600,13 +681,23 @@ function TrendsTab({ selectedYears, toggleYear, locationNames }) {
             ))}
           </LineChart>
         </ResponsiveContainer>
+        </div>
       </div>
 
       {/* Top 10 / Bottom 10 bar charts */}
       {totalByLoc.length > 0 && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="bg-white rounded-lg shadow border p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">Top 10 by Revenue — {yearLabel}</h3>
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+              <h3 className="text-sm font-semibold text-gray-700">Top 10 by Revenue — {yearLabel}</h3>
+              <ChartDownloadToolbar
+                data={[...totalByLoc.slice(0, 10)]}
+                filenameBase={`locations_top10_revenue_${yearLabel.replace(/, /g, "_")}`}
+                chartRef={top10ChartRef}
+                csvColumns={["name", "value"]}
+              />
+            </div>
+            <div ref={top10ChartRef}>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={[...totalByLoc.slice(0, 10)].reverse()} layout="vertical" margin={{ left: 8, right: 16 }}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -616,9 +707,19 @@ function TrendsTab({ selectedYears, toggleYear, locationNames }) {
                 <Bar dataKey="value" fill="#1a3a8f" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
           <div className="bg-white rounded-lg shadow border p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-2">Bottom 10 by Revenue — {yearLabel}</h3>
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+              <h3 className="text-sm font-semibold text-gray-700">Bottom 10 by Revenue — {yearLabel}</h3>
+              <ChartDownloadToolbar
+                data={totalByLoc.slice(-10)}
+                filenameBase={`locations_bottom10_revenue_${yearLabel.replace(/, /g, "_")}`}
+                chartRef={bottom10ChartRef}
+                csvColumns={["name", "value"]}
+              />
+            </div>
+            <div ref={bottom10ChartRef}>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={totalByLoc.slice(-10).reverse()} layout="vertical" margin={{ left: 8, right: 16 }}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -628,6 +729,7 @@ function TrendsTab({ selectedYears, toggleYear, locationNames }) {
                 <Bar dataKey="value" fill="#d97706" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
         </div>
       )}

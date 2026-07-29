@@ -183,14 +183,14 @@ def _longest_common_prefix(codes: list) -> str:
 
 # Below this, a "common prefix" is too short to be a real store base — it means
 # the group is heterogeneous (unrelated branches merged under one chain name,
-# e.g. B2S / Asia Books / 7-Eleven). Such a primary is unsafe to auto-pick.
+# e.g. BookPlay / PagePoint / QuickMart). Such a primary is unsafe to auto-pick.
 _MIN_BASE_LEN = 4
 
 
 def _resolve_location_whs(location: str) -> Dict[str, Any]:
     """Map a consolidated shop to its WhsCodes and derive the primary base code.
 
-    A shop consolidates several GP-tier sub-codes (Paragon has 11). WhsCode is
+    A shop consolidates several GP-tier sub-codes (Grandway has 11). WhsCode is
     the stable join key to on-hand/transfers; the location NAME is a mutable
     display string. The primary = the longest common prefix of the codes (the
     store base). When that prefix is too short the group is heterogeneous
@@ -227,8 +227,8 @@ def _resolve_location_whs(location: str) -> Dict[str, Any]:
     base = _longest_common_prefix(codes)
     heterogeneous = len(base) < _MIN_BASE_LEN
     if heterogeneous:
-        # Unrelated branches merged under one chain name (B2S / Asia Books /
-        # 7-Eleven). No trustworthy base — leave it for a human / the pending
+        # Unrelated branches merged under one chain name (BookPlay / PagePoint /
+        # QuickMart). No trustworthy base — leave it for a human / the pending
         # consolidation split rather than store a bogus "C".
         default_primary = None
     else:

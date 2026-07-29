@@ -82,6 +82,39 @@ def get_username(line_user_id: str) -> Optional[str]:
     return doc.get("username") if doc else None
 
 
+def get_binding_for_user(username: str) -> Optional[dict]:
+    """The LINE binding for a ToyVault user (or None). Used to show connection
+    status and to enforce one-account-at-a-time."""
+    db = _db()
+    if db is None:
+        return None
+    return db["line_bindings"].find_one({"username": username})
+
+
+def set_profile(line_user_id: str, display_name: Optional[str],
+                picture_url: Optional[str] = None) -> None:
+    """Cache the linked LINE account's display name / avatar on the binding so the
+    web app can show *which* account is connected without hitting LINE every time."""
+    db = _db()
+    if db is None:
+        return
+    fields = {}
+    if display_name:
+        fields["display_name"] = display_name
+    if picture_url:
+        fields["picture_url"] = picture_url
+    if fields:
+        db["line_bindings"].update_one({"_id": line_user_id}, {"$set": fields})
+
+
+def unbind_user(username: str) -> int:
+    """Disconnect a user's LINE account(s). Returns how many bindings were removed."""
+    db = _db()
+    if db is None:
+        return 0
+    return db["line_bindings"].delete_many({"username": username}).deleted_count
+
+
 def get_or_create_thread(line_user_id: str, username: str) -> Optional[str]:
     """One persistent thread per LINE user, so LINE conversations have memory and
     also appear in the user's web thread list."""

@@ -1,10 +1,11 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import ErrorBanner from "@/components/ErrorBanner";
 import InfoTooltip from "@/components/InfoTooltip";
+import ChartDownloadToolbar from "@/components/ChartDownloadToolbar";
 import api, { isAbortError } from "@/utils/api";
 import { fmtQty, fmtThb } from "@/utils/formatters";
 import {
@@ -28,6 +29,7 @@ export default function ItemAtLocationPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedYears, setSelectedYears] = useState([CY]);
+  const monthlyTrendRef = useRef(null);
 
   const toggleYear = (y) => {
     setSelectedYears((prev) => {
@@ -303,9 +305,17 @@ export default function ItemAtLocationPage() {
             {/* Monthly trend chart */}
             {trendChartData.length > 0 && (
               <div className="bg-white rounded-xl shadow-md p-6">
-                <h2 className="text-lg font-semibold text-gray-800 mb-4">
-                  Monthly Trend — {info.item_code} at {info.whs_name} ({yearLabel})
-                </h2>
+                <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+                  <h2 className="text-lg font-semibold text-gray-800">
+                    Monthly Trend — {info.item_code} at {info.whs_name} ({yearLabel})
+                  </h2>
+                  <ChartDownloadToolbar
+                    data={trendChartData}
+                    filenameBase={`item_${info.item_code}_at_${info.whs_name}_monthly_${yearLabel.replace(/, /g, "_")}`}
+                    chartRef={monthlyTrendRef}
+                  />
+                </div>
+                <div ref={monthlyTrendRef}>
                 <ResponsiveContainer width="100%" height={360}>
                   <LineChart data={trendChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -322,6 +332,7 @@ export default function ItemAtLocationPage() {
                     )}
                   </LineChart>
                 </ResponsiveContainer>
+                </div>
                 {hasOnhandTrend && (
                   <p className="text-xs text-gray-400 mt-2">
                     On-Hand Qty (green dashed) is reconstructed backwards from current stock at this location using sales, purchases, and transfers.

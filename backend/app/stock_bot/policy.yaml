@@ -15,7 +15,7 @@
 # Allowed values: flagship | standard | boutique | warehouse
 # ---------------------------------------------------------------------------
 location_class:
-  # D1 = Main Warehouse (Wonderworld bulk stock). NOT a sales point — pure
+  # D1 = Main Warehouse (central bulk stock). NOT a sales point — pure
   # storage that ships out to shops. Auto-classifier would have called it
   # `flagship` because it has 14M THB of attributed revenue (from accounting
   # flows / direct shipments), tricking both warehouse-detection rules
@@ -56,8 +56,8 @@ expected_velocity_overrides: {}
 
 # ---------------------------------------------------------------------------
 # Pairs of locations between which the bot must NEVER recommend transfers,
-# even if the math says so. Use for channel-conflict rules (e.g. Robinson
-# and Central are competing channels — moving stock between them creates
+# even if the math says so. Use for channel-conflict rules (e.g. Pinnacle
+# and Grandway are competing channels — moving stock between them creates
 # accounting nightmares).
 # ---------------------------------------------------------------------------
 no_transfer_pairs: []
@@ -75,11 +75,11 @@ excluded_items: []
 # Stock Bot dashboard. The auto-derivation strips GP%, T1/T2, discount %,
 # parenthesised dept info, and promo dates from WhsName — which catches
 # 95%+ of cases (e.g. CTMSYN25 / CTMSYN30 / CTMSYN33 all collapse to
-# "M-สยาพารากอน"). Use this section only when the auto rule produces a
+# "M-Grandway Riverside"). Use this section only when the auto rule produces a
 # weird split that you want to override.
 # ---------------------------------------------------------------------------
 physical_location_overrides: {}
-#   CTMSYN25: "Siam Paragon"
-#   CTMSYN33: "Siam Paragon"
-#   C2EVAN18: "Siam Paragon"   # the pop-up event — opt in if you want it
+#   CTMSYN25: "Grandway Riverside"
+#   CTMSYN33: "Grandway Riverside"
+#   C2EVAN18: "Grandway Riverside"   # the pop-up event — opt in if you want it
 #                                merged with the main store

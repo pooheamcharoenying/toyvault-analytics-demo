@@ -99,6 +99,42 @@ def push_messages(user_id: str, messages: list) -> bool:
     return _send_push(user_id, messages)
 
 
+def _auth_headers() -> dict:
+    return {"Authorization": f"Bearer {get_settings().LINE_CHANNEL_ACCESS_TOKEN}"}
+
+
+def get_profile(user_id: str) -> dict | None:
+    """Fetch a LINE user's public profile — {displayName, pictureUrl, userId, …}.
+    Used to show *which* LINE account a ToyVault user has linked. None on failure."""
+    if not user_id or not is_configured():
+        return None
+    try:
+        r = httpx.get(f"https://api.line.me/v2/bot/profile/{user_id}",
+                      headers=_auth_headers(), timeout=10)
+        if r.status_code == 200:
+            return r.json()
+        logger.warning("LINE get_profile %s -> %s: %s", user_id, r.status_code, (r.text or "")[:200])
+    except Exception:
+        logger.exception("LINE get_profile failed")
+    return None
+
+
+def get_bot_info() -> dict | None:
+    """Fetch the bot's own Official Account identity — {basicId, displayName,
+    pictureUrl, …}. Lets the web app always show the correct name/ID/QR for the
+    AI Assist bot. None on failure."""
+    if not is_configured():
+        return None
+    try:
+        r = httpx.get("https://api.line.me/v2/bot/info", headers=_auth_headers(), timeout=10)
+        if r.status_code == 200:
+            return r.json()
+        logger.warning("LINE get_bot_info -> %s: %s", r.status_code, (r.text or "")[:200])
+    except Exception:
+        logger.exception("LINE get_bot_info failed")
+    return None
+
+
 def start_loading(user_id: str, seconds: int = 60) -> None:
     """Show LINE's loading animation (the 'typing…' dots) in the 1:1 chat while the
     agent works — it auto-dismisses when we send the reply, or after `seconds`.

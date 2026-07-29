@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ResponsiveContainer,
@@ -22,6 +22,7 @@ import SortableTable from "@/components/SortableTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBanner from "@/components/ErrorBanner";
 import InfoTooltip, { METRIC_TOOLTIPS } from "@/components/InfoTooltip";
+import ChartDownloadToolbar from "@/components/ChartDownloadToolbar";
 import { fmtThb, fmtQty, fmtPct } from "@/utils/formatters";
 import { downloadCsv, downloadCsvFromObjects } from "@/utils/csvExport";
 
@@ -156,6 +157,7 @@ function OverviewTab({ selectedYears, toggleYear }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [trendData, setTrendData] = useState(null);
+  const trendChartRef = useRef(null);
 
   const loadData = useCallback((years, signal) => {
     setLoading(true);
@@ -245,9 +247,17 @@ function OverviewTab({ selectedYears, toggleYear }) {
       {/* Monthly Revenue Trend Chart */}
       {trendChartData.length > 0 && (
         <div className="bg-white rounded-lg shadow border p-4">
-          <h2 className="text-base font-semibold text-gray-800 mb-3">
-            Monthly Revenue by Top Brands — {yearLabel}
-          </h2>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <h2 className="text-base font-semibold text-gray-800">
+              Monthly Revenue by Top Brands — {yearLabel}
+            </h2>
+            <ChartDownloadToolbar
+              data={trendChartData}
+              filenameBase={`brands_top_monthly_revenue_${yearLabel.replace(/, /g, "_")}`}
+              chartRef={trendChartRef}
+            />
+          </div>
+          <div ref={trendChartRef}>
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={trendChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200" />
@@ -261,6 +271,7 @@ function OverviewTab({ selectedYears, toggleYear }) {
               ))}
             </LineChart>
           </ResponsiveContainer>
+          </div>
         </div>
       )}
 
@@ -279,6 +290,8 @@ function OverviewTab({ selectedYears, toggleYear }) {
 // ====================== PRODUCT CLASSIFICATION TAB (ABCDE) ======================
 
 function ClassificationTab({ selectedYears, toggleYear }) {
+  const pieChartRef = useRef(null);
+  const paretoChartRef = useRef(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -400,7 +413,16 @@ function ClassificationTab({ selectedYears, toggleYear }) {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white border rounded-lg p-4 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3">Revenue Distribution by Tier</h3>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <h3 className="text-sm font-semibold">Revenue Distribution by Tier</h3>
+            <ChartDownloadToolbar
+              data={pieData}
+              filenameBase={`abcde_distribution_${dimension}`}
+              chartRef={pieChartRef}
+              csvColumns={["name", "value"]}
+            />
+          </div>
+          <div ref={pieChartRef}>
           <ResponsiveContainer width="100%" height={280}>
             <PieChart>
               <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%"
@@ -412,10 +434,20 @@ function ClassificationTab({ selectedYears, toggleYear }) {
               <Tooltip formatter={(v) => fmtThb(v)} />
             </PieChart>
           </ResponsiveContainer>
+          </div>
         </div>
 
         <div className="bg-white border rounded-lg p-4 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3">Top 15 by Revenue (Pareto)</h3>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <h3 className="text-sm font-semibold">Top 15 by Revenue (Pareto)</h3>
+            <ChartDownloadToolbar
+              data={data.rows.slice(0, 15)}
+              filenameBase={`abcde_top15_pareto_${dimension}`}
+              chartRef={paretoChartRef}
+              csvColumns={[dimension === "item" ? "item_code" : "brand", "revenue_thb", "abc_class"]}
+            />
+          </div>
+          <div ref={paretoChartRef}>
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={data.rows.slice(0, 15)} margin={{ bottom: 60 }}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -430,6 +462,7 @@ function ClassificationTab({ selectedYears, toggleYear }) {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          </div>
         </div>
       </div>
 
@@ -452,6 +485,8 @@ function ChannelFitTab({ selectedYears, toggleYear }) {
   const [dimension, setDimension] = useState("brand");
   const [selectedChannel, setSelectedChannel] = useState(null);
   const [showAllChannels, setShowAllChannels] = useState(false);
+  const channelChartRef = useRef(null);
+  const topPerChannelRef = useRef(null);
 
   const fetchData = useCallback((signal) => {
     setLoading(true);
@@ -555,7 +590,16 @@ function ChannelFitTab({ selectedYears, toggleYear }) {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white border rounded-lg p-4 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3">Revenue by Channel — {yearLabel}</h3>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <h3 className="text-sm font-semibold">Revenue by Channel — {yearLabel}</h3>
+            <ChartDownloadToolbar
+              data={chBarData}
+              filenameBase={`channels_revenue_${yearLabel.replace(/, /g, "_")}`}
+              chartRef={channelChartRef}
+              csvColumns={["channel", "revenue"]}
+            />
+          </div>
+          <div ref={channelChartRef}>
           <ResponsiveContainer width="100%" height={Math.max(280, chBarData.length * 24)}>
             <BarChart data={chBarData} layout="vertical" margin={{ left: 100, right: 20 }}>
               <CartesianGrid strokeDasharray="3 3" />
@@ -569,12 +613,24 @@ function ChannelFitTab({ selectedYears, toggleYear }) {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          </div>
         </div>
         <div className="bg-white border rounded-lg p-4 shadow-sm">
-          <h3 className="text-sm font-semibold mb-3">
-            {selectedChannel ? `Top ${dimension === "item" ? "Items" : "Brands"} in ${selectedChannel}` : "Click a channel to see top products"}
-          </h3>
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+            <h3 className="text-sm font-semibold">
+              {selectedChannel ? `Top ${dimension === "item" ? "Items" : "Brands"} in ${selectedChannel}` : "Click a channel to see top products"}
+            </h3>
+            {selectedChannel && data.top_per_channel[selectedChannel] && (
+              <ChartDownloadToolbar
+                data={data.top_per_channel[selectedChannel].slice(0, 10)}
+                filenameBase={`channel_${selectedChannel}_top_${dimension}_${yearLabel.replace(/, /g, "_")}`}
+                chartRef={topPerChannelRef}
+                csvColumns={["product", "revenue"]}
+              />
+            )}
+          </div>
           {selectedChannel && data.top_per_channel[selectedChannel] ? (
+            <div ref={topPerChannelRef}>
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={data.top_per_channel[selectedChannel].slice(0, 10)} margin={{ bottom: 60 }}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -584,6 +640,7 @@ function ChannelFitTab({ selectedYears, toggleYear }) {
                 <Bar dataKey="revenue" name="Revenue (THB)" fill="#1a3a8f" />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           ) : (
             <div className="flex items-center justify-center h-64 text-gray-400">Click a channel card or bar above</div>
           )}

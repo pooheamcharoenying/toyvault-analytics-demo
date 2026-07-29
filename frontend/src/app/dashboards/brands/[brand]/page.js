@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import api, { isAbortError } from "@/utils/api";
 import SortableTable from "@/components/SortableTable";
 import LoadingSpinner from "@/components/LoadingSpinner";
 import ErrorBanner from "@/components/ErrorBanner";
 import AbcdeBadge from "@/components/AbcdeBadge";
+import ChartDownloadToolbar from "@/components/ChartDownloadToolbar";
 import RecommendationPanel from "@/components/RecommendationCard";
 import { fmtThb, fmtQty, fmtPct } from "@/utils/formatters";
 import { downloadCsvFromObjects } from "@/utils/csvExport";
@@ -23,6 +24,208 @@ import {
   CartesianGrid,
   Legend,
 } from "recharts";
+
+/* ------------------------------------------------------------------ */
+/*  Stock vs Sales by Location / by Channel charts                    */
+/* ------------------------------------------------------------------ */
+
+const LOC_BAR_DEFAULT = 20;
+
+function BrandStockVsSalesCharts({ data, showAllLocBars, setShowAllLocBars, brandName }) {
+  const router = useRouter();
+  const { by_location = [], by_channel = [], year_label } = data || {};
+  const locChartRef = useRef(null);
+  const chChartRef = useRef(null);
+  const safeYr = (year_label || "").replace(/[, ]+/g, "_");
+  const safeBrand = (brandName || "brand").replace(/[\\/:*?"<>|]+/g, "_");
+
+  const locRows = (by_location || [])
+    .filter((r) => r.onhand_qty > 0 || r.sold_qty > 0)
+    .map((r) => ({
+      name: r.location.length > 30 ? r.location.slice(0, 28) + "…" : r.location,
+      fullName: r.location,
+      "On-Hand Qty": r.onhand_qty,
+      "Sold Qty": r.sold_qty,
+    }));
+
+  // Lookup: chart axis label → full location name for clickable Y-axis labels
+  const locNameByLabel = useMemo(
+    () => Object.fromEntries(locRows.map((r) => [r.name, r.fullName])),
+    [locRows]
+  );
+  const chNameByLabel = useMemo(
+    () => Object.fromEntries((by_channel || []).map((r) => [r.channel, r.channel])),
+    [by_channel]
+  );
+
+  const visibleLocRows = showAllLocBars ? locRows : locRows.slice(0, LOC_BAR_DEFAULT);
+  const hasMoreLoc = locRows.length > LOC_BAR_DEFAULT;
+
+  const chRows = (by_channel || [])
+    .filter((r) => r.onhand_qty > 0 || r.sold_qty > 0)
+    .map((r) => ({
+      name: r.channel,
+      fullName: r.channel,
+      "On-Hand Qty": r.onhand_qty,
+      "Sold Qty": r.sold_qty,
+    }));
+
+  return (
+    <>
+      {/* By Location */}
+      {locRows.length > 0 && (
+        <div className="bg-white rounded-lg shadow border p-4 mb-6">
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+            <h2 className="text-base font-semibold text-gray-800">
+              Stock Distribution vs. Sales by Location ({year_label})
+            </h2>
+            <ChartDownloadToolbar
+              data={by_location}
+              filenameBase={`brand_${safeBrand}_stock_vs_sales_by_location_${safeYr}`}
+              chartRef={locChartRef}
+              csvColumns={["location", "onhand_qty", "sold_qty", "onhand_thb", "sold_thb"]}
+            />
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            Compare where stock is currently held (blue) against where it has sold (yellow).
+            Locations with high stock but low sales are transfer-out candidates.
+          </p>
+          <div ref={locChartRef}>
+          <ResponsiveContainer width="100%" height={Math.max(320, visibleLocRows.length * 22)}>
+            <BarChart data={visibleLocRows} layout="vertical" margin={{ left: 10, right: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" />
+              <YAxis
+                dataKey="name"
+                type="category"
+                width={170}
+                tick={(tp) => {
+                  const { x, y, payload } = tp;
+                  const fullName = locNameByLabel[payload.value];
+                  const base = { x, y, dy: 4, textAnchor: "end", fontSize: 11 };
+                  if (!fullName || !brandName) {
+                    return <text {...base} fill="#374151">{payload.value}</text>;
+                  }
+                  const href = `/dashboards/locations/${encodeURIComponent(fullName)}/${encodeURIComponent(brandName)}`;
+                  return (
+                    <text
+                      {...base}
+                      fill="var(--nichi-blue)"
+                      style={{ cursor: "pointer", textDecoration: "underline" }}
+                      onClick={() => router.push(href)}
+                    >
+                      <title>{`Open ${brandName} at ${fullName}`}</title>
+                      {payload.value}
+                    </text>
+                  );
+                }}
+              />
+              <Tooltip
+                content={({ payload }) => {
+                  if (!payload?.length) return null;
+                  const d = payload[0].payload;
+                  return (
+                    <div className="bg-white border rounded shadow p-2 text-xs">
+                      <p className="font-semibold mb-1">{d.fullName}</p>
+                      <p>On-Hand Qty: {fmtQty(d["On-Hand Qty"])}</p>
+                      <p>Sold Qty: {fmtQty(d["Sold Qty"])}</p>
+                    </div>
+                  );
+                }}
+              />
+              <Legend />
+              <Bar dataKey="On-Hand Qty" fill="#1a3a8f" />
+              <Bar dataKey="Sold Qty" fill="#FFD200" />
+            </BarChart>
+          </ResponsiveContainer>
+          </div>
+          {hasMoreLoc && (
+            <div className="mt-3 text-center">
+              <button
+                onClick={() => setShowAllLocBars(!showAllLocBars)}
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-100 text-gray-700"
+              >
+                {showAllLocBars
+                  ? `Show Less (Top ${LOC_BAR_DEFAULT})`
+                  : `Show More (${locRows.length - LOC_BAR_DEFAULT} more)`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* By Channel */}
+      {chRows.length > 0 && (
+        <div className="bg-white rounded-lg shadow border p-4 mb-6">
+          <div className="flex flex-wrap items-start justify-between gap-2 mb-1">
+            <h2 className="text-base font-semibold text-gray-800">
+              Stock Distribution vs. Sales by Channel ({year_label})
+            </h2>
+            <ChartDownloadToolbar
+              data={by_channel}
+              filenameBase={`brand_${safeBrand}_stock_vs_sales_by_channel_${safeYr}`}
+              chartRef={chChartRef}
+              csvColumns={["channel", "onhand_qty", "sold_qty", "onhand_thb", "sold_thb"]}
+            />
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            Same comparison aggregated by sales channel (Grandway, Plaza Group, BookPlay, E-Commerce,
+            etc.). On-hand is attributed to the channel each warehouse most often sells through.
+          </p>
+          <div ref={chChartRef}>
+          <ResponsiveContainer width="100%" height={Math.max(280, chRows.length * 28)}>
+            <BarChart data={chRows} layout="vertical" margin={{ left: 10, right: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" />
+              <YAxis
+                dataKey="name"
+                type="category"
+                width={150}
+                tick={(tp) => {
+                  const { x, y, payload } = tp;
+                  const channelName = chNameByLabel[payload.value];
+                  const base = { x, y, dy: 4, textAnchor: "end", fontSize: 11 };
+                  if (!channelName) {
+                    return <text {...base} fill="#374151">{payload.value}</text>;
+                  }
+                  const href = `/dashboards/channels/${encodeURIComponent(channelName)}`;
+                  return (
+                    <text
+                      {...base}
+                      fill="var(--nichi-blue)"
+                      style={{ cursor: "pointer", textDecoration: "underline" }}
+                      onClick={() => router.push(href)}
+                    >
+                      <title>{`Open channel: ${channelName}`}</title>
+                      {payload.value}
+                    </text>
+                  );
+                }}
+              />
+              <Tooltip
+                content={({ payload }) => {
+                  if (!payload?.length) return null;
+                  const d = payload[0].payload;
+                  return (
+                    <div className="bg-white border rounded shadow p-2 text-xs">
+                      <p className="font-semibold mb-1">{d.fullName}</p>
+                      <p>On-Hand Qty: {fmtQty(d["On-Hand Qty"])}</p>
+                      <p>Sold Qty: {fmtQty(d["Sold Qty"])}</p>
+                    </div>
+                  );
+                }}
+              />
+              <Legend />
+              <Bar dataKey="On-Hand Qty" fill="#1a3a8f" />
+              <Bar dataKey="Sold Qty" fill="#FFD200" />
+            </BarChart>
+          </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  helpers                                                           */
@@ -164,6 +367,10 @@ export default function BrandDetailPage() {
   const [error, setError] = useState(null);
   const [selectedYears, setSelectedYears] = useState([CY]);
   const [trendData, setTrendData] = useState(null);
+  const [stockVsSales, setStockVsSales] = useState(null);
+  const [showAllLocBars, setShowAllLocBars] = useState(false);
+  const monthlyTrendChartRef = useRef(null);
+  const topProductsChartRef = useRef(null);
 
   const toggleYear = (y) => {
     setSelectedYears((prev) => {
@@ -216,12 +423,28 @@ export default function BrandDetailPage() {
     [brandName]
   );
 
+  const loadStockVsSales = useCallback(
+    (years, signal) => {
+      const qs = new URLSearchParams();
+      qs.set("brand", brandName);
+      years.forEach((y) => qs.append("year_list", String(y)));
+      api
+        .get(`/api/brand_stock_vs_sales?${qs.toString()}`, { signal })
+        .then((res) => {
+          if (res.data?.message !== "data not ready") setStockVsSales(res.data);
+        })
+        .catch(() => {});
+    },
+    [brandName]
+  );
+
   useEffect(() => {
     const ctrl = new AbortController();
     loadData(selectedYears, ctrl.signal);
     loadTrend(selectedYears, ctrl.signal);
+    loadStockVsSales(selectedYears, ctrl.signal);
     return () => ctrl.abort();
-  }, [loadData, loadTrend, selectedYears]);
+  }, [loadData, loadTrend, loadStockVsSales, selectedYears]);
 
   const trendChartData = useMemo(() => {
     if (!trendData?.trends?.length) return [];
@@ -447,14 +670,23 @@ export default function BrandDetailPage() {
           {/* Monthly Revenue & Margin Trend */}
           {trendChartData.length > 0 && (
             <div className="bg-white rounded-lg shadow border p-4 mb-6">
-              <h2 className="text-base font-semibold text-gray-800 mb-2">
-                Monthly Revenue &amp; Cost Trend — {brandName} ({selectedYears.sort((a, b) => a - b).join(", ")})
-              </h2>
+              <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
+                <h2 className="text-base font-semibold text-gray-800">
+                  Monthly Revenue &amp; Cost Trend — {brandName} ({selectedYears.sort((a, b) => a - b).join(", ")})
+                </h2>
+                <ChartDownloadToolbar
+                  data={trendChartData}
+                  filenameBase={`brand_${brandName}_monthly_trend_${selectedYears.sort((a, b) => a - b).join("_")}`}
+                  chartRef={monthlyTrendChartRef}
+                  csvColumns={["period", "Revenue (Actual)", "Revenue (Master)", "COGS (FOB)"]}
+                />
+              </div>
               {brandTrendPartialNote && (
                 <p className="text-xs text-amber-700 mb-3">
                   ⓘ {brandTrendPartialNote} → shown as full-month running-rate projection
                 </p>
               )}
+              <div ref={monthlyTrendChartRef}>
               <ResponsiveContainer width="100%" height={320}>
                 <LineChart data={trendChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200" />
@@ -467,15 +699,35 @@ export default function BrandDetailPage() {
                   <Line type="monotone" dataKey="COGS (FOB)" stroke="#FFD200" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+              </div>
             </div>
+          )}
+
+          {/* Stock Distribution vs. Sales — by Location and by Channel */}
+          {stockVsSales && (stockVsSales.by_location?.length > 0 || stockVsSales.by_channel?.length > 0) && (
+            <BrandStockVsSalesCharts
+              data={stockVsSales}
+              brandName={brandName}
+              showAllLocBars={showAllLocBars}
+              setShowAllLocBars={setShowAllLocBars}
+            />
           )}
 
           {/* Chart: top products revenue vs cost */}
           {chartData.length > 0 && (
             <div className="bg-white rounded-lg shadow border p-4 mb-6">
-              <h2 className="text-base font-semibold text-gray-800 mb-3">
-                Top Products: Revenue vs Cost ({selectedYears.sort((a, b) => a - b).join(", ")})
-              </h2>
+              <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                <h2 className="text-base font-semibold text-gray-800">
+                  Top Products: Revenue vs Cost ({selectedYears.sort((a, b) => a - b).join(", ")})
+                </h2>
+                <ChartDownloadToolbar
+                  data={chartData}
+                  filenameBase={`brand_${brandName}_top_products_${selectedYears.sort((a, b) => a - b).join("_")}`}
+                  chartRef={topProductsChartRef}
+                  csvColumns={["name", "revenue", "cost"]}
+                />
+              </div>
+              <div ref={topProductsChartRef}>
               <ResponsiveContainer width="100%" height={320}>
                 <BarChart
                   data={chartData}
@@ -507,6 +759,7 @@ export default function BrandDetailPage() {
                   />
                 </BarChart>
               </ResponsiveContainer>
+              </div>
             </div>
           )}
 

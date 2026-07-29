@@ -1622,6 +1622,144 @@ def get_brand_at_location_trend(
     return JSONResponse(jsonable_encoder(payload))
 
 
+@router.get("/brand_stock_vs_sales", summary="Brand on-hand vs sold qty broken down by location and by channel")
+def get_brand_stock_vs_sales(
+    brand: str = Query(..., description="Brand name (Item Master GroupName)"),
+    year_list: Optional[list[int]] = Query(default=None),
+):
+    df_raw_sale = hf.GLOBAL_DF.get("sale")
+    df_raw_onhand = hf.GLOBAL_DF.get("onhand")
+    df_item_master = hf.GLOBAL_DF.get("master")
+    df_whs_code = hf.GLOBAL_DF.get("whs_code")
+    if df_raw_sale is None or df_raw_onhand is None or df_item_master is None or df_whs_code is None:
+        return _data_not_ready()
+    payload = cached_call(
+        "compute_brand_stock_vs_sales", exr.compute_brand_stock_vs_sales,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        brand=brand,
+        year_list=year_list,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
+@router.get(
+    "/product_market_fit",
+    summary="Per-location product-market fit: lift analysis for brand, brand×line, and price band",
+)
+def get_product_market_fit(
+    location: str = Query(...),
+    year_list: Optional[list[int]] = Query(default=None),
+    top_n: int = Query(default=5, ge=1, le=20),
+):
+    from app.utils.product_market_fit import compute_product_market_fit
+    df_raw_sale = hf.GLOBAL_DF.get("sale")
+    df_raw_onhand = hf.GLOBAL_DF.get("onhand")
+    df_item_master = hf.GLOBAL_DF.get("master")
+    df_whs_code = hf.GLOBAL_DF.get("whs_code")
+    if (
+        df_raw_sale is None or df_raw_onhand is None
+        or df_item_master is None or df_whs_code is None
+    ):
+        return _data_not_ready()
+    payload = cached_call(
+        "compute_product_market_fit", compute_product_market_fit,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        location=location,
+        year_list=year_list,
+        top_n=top_n,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
+@router.get("/location_brand_trends", summary="Per-brand monthly or weekly sales at a single location")
+def get_location_brand_trends(
+    location: str = Query(...),
+    year_list: Optional[list[int]] = Query(default=None),
+    top_n: int = Query(default=50, ge=1, le=500),
+    granularity: str = Query(default="monthly", description="'monthly' (default) or 'weekly'"),
+):
+    df_raw_sale = hf.GLOBAL_DF.get("sale")
+    df_raw_onhand = hf.GLOBAL_DF.get("onhand")
+    df_item_master = hf.GLOBAL_DF.get("master")
+    df_whs_code = hf.GLOBAL_DF.get("whs_code")
+    if df_raw_sale is None or df_raw_onhand is None or df_item_master is None or df_whs_code is None:
+        return _data_not_ready()
+    payload = cached_call(
+        "compute_location_brand_trends", la.compute_location_brand_trends,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        location=location,
+        year_list=year_list,
+        top_n=top_n,
+        granularity=granularity,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
+@router.get("/location_item_trends", summary="Per-item monthly or weekly sales at a single location")
+def get_location_item_trends(
+    location: str = Query(...),
+    year_list: Optional[list[int]] = Query(default=None),
+    top_n: int = Query(default=100, ge=1, le=1000),
+    granularity: str = Query(default="monthly", description="'monthly' (default) or 'weekly'"),
+):
+    df_raw_sale = hf.GLOBAL_DF.get("sale")
+    df_raw_onhand = hf.GLOBAL_DF.get("onhand")
+    df_item_master = hf.GLOBAL_DF.get("master")
+    df_whs_code = hf.GLOBAL_DF.get("whs_code")
+    if df_raw_sale is None or df_raw_onhand is None or df_item_master is None or df_whs_code is None:
+        return _data_not_ready()
+    payload = cached_call(
+        "compute_location_item_trends", la.compute_location_item_trends,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        location=location,
+        year_list=year_list,
+        top_n=top_n,
+        granularity=granularity,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
+@router.get("/brand_at_location_item_trends", summary="Per-item monthly or weekly sales for a brand at a location")
+def get_brand_at_location_item_trends(
+    location: str = Query(...),
+    brand: str = Query(...),
+    year_list: Optional[list[int]] = Query(default=None),
+    top_n: int = Query(default=200, ge=1, le=1000),
+    granularity: str = Query(default="monthly", description="'monthly' (default) or 'weekly'"),
+):
+    df_raw_sale = hf.GLOBAL_DF.get("sale")
+    df_raw_onhand = hf.GLOBAL_DF.get("onhand")
+    df_item_master = hf.GLOBAL_DF.get("master")
+    df_whs_code = hf.GLOBAL_DF.get("whs_code")
+    if df_raw_sale is None or df_raw_onhand is None or df_item_master is None or df_whs_code is None:
+        return _data_not_ready()
+    payload = cached_call(
+        "compute_brand_at_location_item_trends", la.compute_brand_at_location_item_trends,
+        df_raw_sale=df_raw_sale,
+        df_raw_onhand=df_raw_onhand,
+        df_item_master=df_item_master,
+        df_whs_code=df_whs_code,
+        location=location,
+        brand=brand,
+        year_list=year_list,
+        top_n=top_n,
+        granularity=granularity,
+    )
+    return JSONResponse(jsonable_encoder(payload))
+
+
 # ---------------------------------------------------------------------------
 # Home Summary (OBJ-23) — one call returns all card stats
 # ---------------------------------------------------------------------------

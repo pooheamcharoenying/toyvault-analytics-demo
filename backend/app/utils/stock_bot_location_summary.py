@@ -169,7 +169,7 @@ def enrich_with_caps_from_states(
     ``app.stock_bot.api.build_all_item_location_states``. Since the bot
     pipeline now consolidates WhsCodes to physical-location labels at
     its first step, each state's ``whs_code`` IS the physical location
-    string (e.g. ``"M-สยาพารากอน"``) — no derivation needed.
+    string (e.g. ``"M-Grandway Riverside"``) — no derivation needed.
 
     For safety against either path (fully consolidated OR legacy
     SAP-code data), we keep the derive_physical_location fallback. On

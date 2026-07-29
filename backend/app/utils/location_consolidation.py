@@ -1,6 +1,6 @@
 """Location Consolidation — maps multiple WhsCodes to a single display location.
 
-Business context: The same physical retail location (e.g., "Siam Paragon")
+Business context: The same physical retail location (e.g., "Grandway Riverside")
 has multiple WhsCodes because of different GP commission tiers (GP25, GP30,
 GP33, Art Toy, promotional rates, etc.). For analytics purposes, we need to
 consolidate these into a single location identity so that:
@@ -24,6 +24,7 @@ Usage:
 """
 from __future__ import annotations
 
+import difflib
 import json
 import os
 from functools import lru_cache
@@ -105,3 +106,35 @@ def get_all_codes_for_location(consolidated_name: str) -> list[str]:
 def get_mapping() -> dict[str, str]:
     """Return the full WhsCode -> consolidated name mapping."""
     return dict(_load_mapping())
+
+
+def resolve_location_name(location, available_names, cutoff: float = 0.82):
+    """Best-effort match of a user-supplied location to an actual stored name.
+
+    Tries, in order: exact -> case/space-normalized -> fuzzy (``difflib``).
+    Returns the matched stored name, or the original ``location`` unchanged if
+    nothing is close enough (so callers then get an empty result, exactly as
+    before — this only ever *helps* a near-miss, never changes a correct match).
+
+    Motivation: some stored warehouse names carry small typos or spacing
+    differences from the source system. Location lookups are exact-match, so a
+    correctly-spelled name typed by the AI assistant could match nothing and
+    wrongly report "no data". A fuzzy fallback resolves the near-miss to the
+    real stored name.
+    """
+    if not location:
+        return location
+    seen, names = set(), []
+    for n in available_names:
+        s = "" if n is None else str(n)
+        if s and s not in seen:
+            seen.add(s)
+            names.append(s)
+    if not names or location in seen:
+        return location
+    nloc = str(location).strip().lower().replace(" ", "")
+    for n in names:
+        if n.strip().lower().replace(" ", "") == nloc:
+            return n
+    match = difflib.get_close_matches(str(location), names, n=1, cutoff=cutoff)
+    return match[0] if match else location

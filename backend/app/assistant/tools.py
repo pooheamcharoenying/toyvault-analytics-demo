@@ -274,7 +274,7 @@ TOOLS = [
     ),
     Tool(
         "list_channels",
-        "Every sales channel (Central, Robinson, The Mall, Online, …) with revenue (actual + "
+        "Every sales channel (Grandway, Pinnacle, Plaza Group, E-Commerce, …) with revenue (actual + "
         "master), mix %, number of physical locations, margins, and its top location. Use for "
         "'channels ranked', channel sizes, or channel mix. A channel maps to many locations.",
         {"year_list": _YEAR_LIST},
@@ -337,7 +337,7 @@ TOOLS = [
     Tool(
         "get_channel_detail",
         "One channel drilled down: the physical locations inside it, its brand breakdown, and its "
-        "monthly revenue trend. Use for 'which stores and brands make up Robinson/Central, over "
+        "monthly revenue trend. Use for 'which stores and brands make up Grandway/Pinnacle, over "
         "time'. Resolve the channel name with list_channels first.",
         {
             "channel": {"type": "string", "description": "Exact channel name (resolve via list_channels)."},
@@ -359,7 +359,16 @@ TOOLS = [
         },
         da.get_brand_monthly_trend,
     ),
-    # (product_market_fit + brand_stock_vs_sales tools omitted — those dashboards aren't in ToyVault yet)
+    Tool(
+        "get_brand_stock_vs_sales",
+        "For ONE brand, on-hand vs sold quantity broken down BY location and BY channel — where "
+        "the stock sits vs where it sells. Resolve the brand with list_brand_names first.",
+        {
+            "brand": {"type": "string", "description": "Exact brand name (resolve via list_brand_names)."},
+            "year_list": _YEAR_LIST,
+        },
+        da.get_brand_stock_vs_sales,
+    ),
 
     # --- Products / classification ---
     Tool(
@@ -477,6 +486,18 @@ TOOLS = [
         da.get_seasonality_analysis,
     ),
     Tool(
+        "get_product_market_fit",
+        "What over/under-indexes at ONE location vs the company baseline (lift analysis by brand, "
+        "line, and price band). Use for 'what's distinctive about this location's mix'. Resolve "
+        "the location with list_location_names first.",
+        {
+            "location": {"type": "string", "description": "Exact consolidated location name (resolve via list_location_names)."},
+            "year_list": _YEAR_LIST,
+            "top_n": {"type": "integer", "description": "Top over/under-indexing items (1–20).", "default": 5},
+        },
+        da.get_product_market_fit,
+    ),
+    Tool(
         "get_item_trend",
         "Monthly sales trend for ONE item (by ItemCode), with reconstructed end-of-month on-hand. "
         "Use for a single product's trajectory over time.",
@@ -531,7 +552,7 @@ TOOLS = [
     Tool(
         "list_location_names",
         "Every location's exact name (with revenue for context) — a cheap way to resolve a user's "
-        "location (e.g. 'Siam Paragon') to its stored name (often Thai, e.g. 'M-สยาพารากอน') "
+        "location (e.g. 'Grandway Riverside') to its exact stored name "
         "before calling a location-scoped tool. Prefer this over list_locations when you only need "
         "the name.",
         {

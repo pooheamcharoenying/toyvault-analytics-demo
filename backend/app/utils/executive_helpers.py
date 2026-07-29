@@ -907,3 +907,164 @@ def compute_brand_monthly_trend(
         pass
 
     return {"trends": trends, "periods": period_strs}
+
+
+def compute_brand_stock_vs_sales(
+    df_raw_sale: pd.DataFrame,
+    df_raw_onhand: pd.DataFrame,
+    df_item_master: pd.DataFrame,
+    df_whs_code: pd.DataFrame,
+    *,
+    brand: str,
+    year_list: Optional[list[int]] = None,
+) -> dict[str, Any]:
+    """For one brand, return stock vs. sales broken down by Location AND by Channel.
+
+    Powers the two paired-bar charts on the brand detail page:
+      1. On-Hand Qty vs Sold Qty per location  (where stock sits vs. where it sells)
+      2. On-Hand Qty vs Sold Qty per channel   (retail chain / marketplace / etc.)
+
+    Sales are filtered to ``year_list`` if given; on-hand is the current
+    snapshot (no time filter possible — OnHand has no DocDate).
+
+    Channel attribution for on-hand: each WhsCode is mapped to its
+    most-frequent ``GroupName`` across the *full* sales history (not
+    year-filtered, so locations that only sold in earlier years still get
+    a channel). On-hand at WhsCodes that never appear in sales at all is
+    bucketed under "Unattributed".
+
+    Returns
+    -------
+    dict with:
+      - brand
+      - by_location: [{location, onhand_qty, sold_qty, onhand_thb, sold_thb}]
+      - by_channel:  [{channel,  onhand_qty, sold_qty, onhand_thb, sold_thb}]
+      - year_label
+    """
+    from app.utils.location_consolidation import add_consolidated_column
+
+    if df_whs_code is None or df_whs_code.empty:
+        return {"brand": brand, "by_location": [], "by_channel": [], "year_label": ""}
+
+    # --- Items in this brand ---
+    brand_mask = df_item_master["GroupName"].astype(str).str.strip() == str(brand).strip()
+    brand_items_df = df_item_master[brand_mask][["ItemCode", "Price"]].copy()
+    brand_items_df["ItemCode"] = brand_items_df["ItemCode"].astype(str).str.strip()
+    if brand_items_df.empty:
+        return {"brand": brand, "by_location": [], "by_channel": [], "year_label": ""}
+    brand_items = set(brand_items_df["ItemCode"])
+    price_map = brand_items_df.drop_duplicates("ItemCode").set_index("ItemCode")["Price"]
+
+    whs_map = df_whs_code[["WhsCode", "WhsName"]].copy()
+    whs_map["WhsCode"] = whs_map["WhsCode"].astype(str).str.strip()
+    _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
+
+    # --- Sales (apply dedup + brand filter; year_list filtered for the headline) ---
+    df_sale, _, _ = nstk.prepare_sales_and_onhand_data(
+        df_raw_sale, df_raw_onhand, df_item_master
+    )
+    sale_all = _channel_dedup_sale(df_sale, "monthly").copy()
+    sale_all["ItemCode"] = sale_all["ItemCode"].astype(str).str.strip()
+    sale_all["WhsCode"] = sale_all["WhsCode"].astype(str).str.strip()
+    sale_all = sale_all[sale_all["ItemCode"].isin(brand_items)]
+    if sale_all.empty:
+        return {"brand": brand, "by_location": [], "by_channel": [], "year_label": ""}
+    sale_all = sale_all.merge(whs_map, on="WhsCode", how="left").dropna(subset=["WhsName"])
+    sale_all = add_consolidated_column(sale_all, _whs_lookup)
+    sale_all["WhsName"] = sale_all["ConsolidatedLocation"]
+    sale_all["Quantity"] = pd.to_numeric(sale_all["Quantity"], errors="coerce").fillna(0)
+    sale_all["LineTotal"] = pd.to_numeric(sale_all["LineTotal"], errors="coerce").fillna(0)
+
+    sale = sale_all
+    if year_list:
+        sale = sale[sale["DocDate"].dt.year.isin(year_list)]
+
+    # --- On-hand for items in this brand (current snapshot) ---
+    oh = df_raw_onhand.copy()
+    oh["ItemCode"] = oh["ItemCode"].astype(str).str.strip()
+    oh["WhsCode"] = oh["WhsCode"].astype(str).str.strip()
+    oh = oh[oh["ItemCode"].isin(brand_items)]
+    oh = oh.merge(whs_map, on="WhsCode", how="left").dropna(subset=["WhsName"])
+    oh = add_consolidated_column(oh, _whs_lookup)
+    oh["WhsName"] = oh["ConsolidatedLocation"]
+    oh["OnHand"] = pd.to_numeric(oh["OnHand"], errors="coerce").fillna(0)
+    oh["MasterPrice"] = oh["ItemCode"].map(price_map).fillna(0).astype(float)
+    oh["OnHandTHB"] = oh["OnHand"] * oh["MasterPrice"]
+
+    # Drop "Pro_*" promo locations from both — they exist only as pop-ups.
+    sale = sale[~sale["WhsName"].str.lower().str.startswith("pro", na=False)]
+    oh = oh[~oh["WhsName"].str.lower().str.startswith("pro", na=False)]
+
+    # ============================================================
+    # By location
+    # ============================================================
+    sold_by_loc = sale.groupby("WhsName", as_index=False).agg(
+        sold_qty=("Quantity", "sum"),
+        sold_thb=("LineTotal", "sum"),
+    )
+    onhand_by_loc = oh.groupby("WhsName", as_index=False).agg(
+        onhand_qty=("OnHand", "sum"),
+        onhand_thb=("OnHandTHB", "sum"),
+    )
+    by_loc = onhand_by_loc.merge(sold_by_loc, on="WhsName", how="outer")
+    for col in ("onhand_qty", "onhand_thb", "sold_qty", "sold_thb"):
+        by_loc[col] = by_loc[col].fillna(0.0)
+    by_loc = by_loc[(by_loc["onhand_qty"] > 0) | (by_loc["sold_qty"] > 0)]
+    # Sort so the largest holders sit on top of the chart
+    by_loc = by_loc.sort_values("onhand_qty", ascending=False)
+
+    by_location_rows = [
+        {
+            "location": str(r["WhsName"]),
+            "onhand_qty": int(round(float(r["onhand_qty"]))),
+            "sold_qty": int(round(float(r["sold_qty"]))),
+            "onhand_thb": round(float(r["onhand_thb"]), 2),
+            "sold_thb": round(float(r["sold_thb"]), 2),
+        }
+        for _, r in by_loc.iterrows()
+    ]
+
+    # ============================================================
+    # By channel
+    # ============================================================
+    # WhsCode → primary channel, taken from the *full* sales history for this
+    # brand (not year-filtered) so on-hand at quiet locations still maps.
+    channel_by_whs = (
+        sale_all.groupby("WhsCode")["GroupName"]
+        .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else None)
+    )
+    oh["Channel"] = oh["WhsCode"].map(channel_by_whs).fillna("Unattributed")
+
+    sold_by_ch = sale.groupby("GroupName", as_index=False).agg(
+        sold_qty=("Quantity", "sum"),
+        sold_thb=("LineTotal", "sum"),
+    ).rename(columns={"GroupName": "channel"})
+    onhand_by_ch = oh.groupby("Channel", as_index=False).agg(
+        onhand_qty=("OnHand", "sum"),
+        onhand_thb=("OnHandTHB", "sum"),
+    ).rename(columns={"Channel": "channel"})
+    by_ch = onhand_by_ch.merge(sold_by_ch, on="channel", how="outer")
+    for col in ("onhand_qty", "onhand_thb", "sold_qty", "sold_thb"):
+        by_ch[col] = by_ch[col].fillna(0.0)
+    by_ch = by_ch[(by_ch["onhand_qty"] > 0) | (by_ch["sold_qty"] > 0)]
+    by_ch = by_ch.sort_values("onhand_qty", ascending=False)
+
+    by_channel_rows = [
+        {
+            "channel": str(r["channel"]),
+            "onhand_qty": int(round(float(r["onhand_qty"]))),
+            "sold_qty": int(round(float(r["sold_qty"]))),
+            "onhand_thb": round(float(r["onhand_thb"]), 2),
+            "sold_thb": round(float(r["sold_thb"]), 2),
+        }
+        for _, r in by_ch.iterrows()
+    ]
+
+    year_label = ", ".join(str(y) for y in sorted(year_list)) if year_list else "Lifetime"
+
+    return {
+        "brand": str(brand),
+        "by_location": by_location_rows,
+        "by_channel": by_channel_rows,
+        "year_label": year_label,
+    }

@@ -32,7 +32,7 @@ MAX_QTY_PER_TRANSFER = 200
 MIN_UPLIFT_THB = 100.0          # was 500 — let small-margin top-ups through
 MIN_IMPACT_THB = 200.0          # was 1000 — same intent at the proposal level
 # 2026-06-03: caps raised again. The previous 50-per-dest cap was binding
-# hard at flagships — Siam Paragon had 80-150 items needing replenishment
+# hard at flagships — Grandway Riverside had 80-150 items needing replenishment
 # but only 50 made it through, dropping meaningful top-up recommendations
 # in favour of pure-stockout ones (because the urgency-boosted priority
 # score favours zero-on-hand items over partial-deficit items).

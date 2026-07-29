@@ -2,7 +2,7 @@
 
 The Stock Bot's mental model is the planner's mental model: one entry
 per *physical store*, not per SAP commission tier. A single mall like
-Siam Paragon can spread across many SAP WhsCodes (GP25 / GP30 / GP33 /
+Grandway Riverside can spread across many SAP WhsCodes (GP25 / GP30 / GP33 /
 Art Toy department / promo pop-ups), and a planner thinks of them as
 ONE store. The bot should too.
 
@@ -19,7 +19,7 @@ location grain — what a planner actually executes against.
 
 Pure pandas transforms. No I/O, no state. The output frames have
 ``WhsCode`` replaced by the physical-location label (e.g.
-``"M-สยาพารากอน"`` rather than ``"CTMSYN30"``). The original WhsCode
+``"M-Grandway Riverside"`` rather than ``"CTMSYN30"``). The original WhsCode
 is preserved in a new ``OriginalWhsCode`` column for audit.
 
 Used by ``app.stock_bot.api.build_all_item_location_states`` as the

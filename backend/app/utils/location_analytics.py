@@ -931,3 +931,417 @@ def compute_brand_at_location_trend(
         pass
 
     return {"months": months}
+
+
+def _months_table_from_groupby(
+    by_key_month: pd.DataFrame,
+    key_col: str,
+    top_n: int,
+    extra_cols: Optional[dict[str, dict]] = None,
+) -> tuple[list[str], int, list[dict]]:
+    """Shared builder for key × month tables (key = brand or item_code).
+
+    by_key_month must already be grouped with columns:
+      [key_col, "Month", "sold_thb", "sold_master_thb", "sold_qty"]
+
+    Returns (period_strs, total_months, rows) where each row has:
+      key_col, total_sold_thb, total_sold_master_thb, total_sold_qty,
+      avg_sold_thb_per_month, avg_sold_master_thb_per_month,
+      avg_sold_qty_per_month,
+      months: [{period, sold_thb, sold_master_thb, sold_qty}, ...]
+      plus any columns specified in extra_cols (e.g. {"item_name": {...}}).
+    """
+    if by_key_month.empty:
+        return [], 0, []
+
+    from app.utils.period_granularity import format_period_label
+    granularity = (by_key_month.attrs.get("granularity") if hasattr(by_key_month, "attrs") else None) or "monthly"
+    periods_ts = sorted(by_key_month["Month"].unique())
+    period_strs = [format_period_label(p, granularity) for p in periods_ts]
+    total_months = len(period_strs)
+
+    totals = (
+        by_key_month.groupby(key_col, as_index=False)
+        .agg(
+            total_sold_thb=("sold_thb", "sum"),
+            total_sold_master_thb=("sold_master_thb", "sum"),
+            total_sold_qty=("sold_qty", "sum"),
+        )
+        .sort_values("total_sold_thb", ascending=False)
+    )
+    if top_n and top_n > 0:
+        totals = totals.head(top_n)
+
+    grouped = by_key_month.groupby(key_col)
+    rows = []
+    denom = max(1, total_months)
+    for _, r in totals.iterrows():
+        k = r[key_col]
+        if k not in grouped.groups:
+            continue
+        sub = grouped.get_group(k).set_index("Month")
+        months = []
+        for p_ts, p_str in zip(periods_ts, period_strs):
+            if p_ts in sub.index:
+                m = sub.loc[p_ts]
+                months.append({
+                    "period": p_str,
+                    "sold_thb": round(float(m["sold_thb"]), 2),
+                    "sold_master_thb": round(float(m["sold_master_thb"]), 2),
+                    "sold_qty": int(round(float(m["sold_qty"]))),
+                })
+            else:
+                months.append({"period": p_str, "sold_thb": 0.0, "sold_master_thb": 0.0, "sold_qty": 0})
+
+        total_thb = float(r["total_sold_thb"])
+        total_master = float(r["total_sold_master_thb"])
+        total_qty = float(r["total_sold_qty"])
+        row = {
+            key_col: str(k),
+            "total_sold_thb": round(total_thb, 2),
+            "total_sold_master_thb": round(total_master, 2),
+            "total_sold_qty": int(round(total_qty)),
+            "avg_sold_thb_per_month": round(total_thb / denom, 2),
+            "avg_sold_master_thb_per_month": round(total_master / denom, 2),
+            "avg_sold_qty_per_month": round(total_qty / denom, 2),
+            "months": months,
+        }
+        if extra_cols and str(k) in (extra_cols.get(key_col) or {}):
+            for col, val in extra_cols[key_col][str(k)].items():
+                row[col] = val
+        rows.append(row)
+
+    return period_strs, total_months, rows
+
+
+def _prepare_location_sales(
+    df_raw_sale: pd.DataFrame,
+    df_raw_onhand: pd.DataFrame,
+    df_item_master: pd.DataFrame,
+    df_whs_code: pd.DataFrame,
+    location: str,
+    year_list: Optional[list[int]],
+    granularity: str = "monthly",
+) -> pd.DataFrame:
+    """Return deduped sales filtered to a single (consolidated) location, with
+    Revenue_Master_THB and Month columns. Empty DataFrame if no rows match.
+
+    The ``Month`` column is the period-start timestamp at the requested
+    granularity (start of month or start of ISO week)."""
+    if df_whs_code is None or df_whs_code.empty:
+        return pd.DataFrame()
+
+    df_sale, _, _ = nstk.prepare_sales_and_onhand_data(
+        df_raw_sale, df_raw_onhand, df_item_master
+    )
+    sale = _channel_dedup_sale(df_sale)
+    if sale.empty:
+        return pd.DataFrame()
+
+    sale = _add_master_revenue(sale, df_item_master)
+
+    whs_map = df_whs_code[["WhsCode", "WhsName"]].copy()
+    whs_map["WhsCode"] = whs_map["WhsCode"].astype(str).str.strip()
+    sale["WhsCode"] = sale["WhsCode"].astype(str).str.strip()
+    sale = sale.merge(whs_map, on="WhsCode", how="left")
+    sale = sale.dropna(subset=["WhsName"])
+
+    from app.utils.location_consolidation import add_consolidated_column, resolve_location_name
+    _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
+    sale = add_consolidated_column(sale, _whs_lookup)
+    sale["WhsName"] = sale["ConsolidatedLocation"]
+
+    location = resolve_location_name(location, sale["WhsName"].unique())
+    sale = sale[sale["WhsName"] == location]
+    if sale.empty:
+        return pd.DataFrame()
+
+    if year_list:
+        sale = sale[sale["DocDate"].dt.year.isin(year_list)]
+        if sale.empty:
+            return pd.DataFrame()
+
+    sale = sale.copy()
+    from app.utils.period_granularity import period_start_series
+    sale["Month"] = period_start_series(sale["DocDate"], granularity)
+    sale.attrs["granularity"] = granularity
+    return sale
+
+
+def compute_location_brand_trends(
+    df_raw_sale: pd.DataFrame,
+    df_raw_onhand: pd.DataFrame,
+    df_item_master: pd.DataFrame,
+    df_whs_code: pd.DataFrame,
+    *,
+    location: str,
+    year_list: Optional[list[int]] = None,
+    top_n: int = 50,
+    granularity: str = "monthly",
+) -> dict[str, Any]:
+    """Brand × period sales matrix at a single location (monthly or weekly).
+
+    Returns
+    -------
+    dict with:
+      - location, periods, total_months
+      - brands: [{brand, total_sold_thb, total_sold_master_thb, total_sold_qty,
+                  avg_sold_*_per_month, months: [...]}]
+    """
+    from app.utils.period_granularity import normalize_granularity
+    granularity = normalize_granularity(granularity)
+    sale = _prepare_location_sales(
+        df_raw_sale, df_raw_onhand, df_item_master, df_whs_code, location, year_list,
+        granularity=granularity,
+    )
+    if sale.empty:
+        return {"location": location, "periods": [], "brands": [], "total_months": 0, "granularity": granularity}
+
+    sale["Brand"] = sale["Brand"].fillna("Unknown")
+    by_brand_month = sale.groupby(["Brand", "Month"], as_index=False).agg(
+        sold_thb=("LineTotal", "sum"),
+        sold_master_thb=("Revenue_Master_THB", "sum"),
+        sold_qty=("Quantity", "sum"),
+    )
+    by_brand_month.attrs["granularity"] = granularity
+
+    periods, total_months, rows = _months_table_from_groupby(by_brand_month, "Brand", top_n)
+    # Rename "Brand" → "brand" for JSON
+    brands = [{("brand" if k == "Brand" else k): v for k, v in r.items()} for r in rows]
+
+    return {
+        "location": location,
+        "periods": periods,
+        "total_months": total_months,
+        "brands": brands,
+        "granularity": granularity,
+    }
+
+
+def compute_location_item_trends(
+    df_raw_sale: pd.DataFrame,
+    df_raw_onhand: pd.DataFrame,
+    df_item_master: pd.DataFrame,
+    df_whs_code: pd.DataFrame,
+    *,
+    location: str,
+    year_list: Optional[list[int]] = None,
+    top_n: int = 100,
+    granularity: str = "monthly",
+) -> dict[str, Any]:
+    """Item × period sales matrix at a single location (monthly or weekly).
+
+    Returns
+    -------
+    dict with:
+      - location, periods, total_months
+      - items: [{item_code, item_name, brand, total_*, avg_*_per_month, months: [...]}]
+    """
+    from app.utils.period_granularity import normalize_granularity
+    granularity = normalize_granularity(granularity)
+    sale = _prepare_location_sales(
+        df_raw_sale, df_raw_onhand, df_item_master, df_whs_code, location, year_list,
+        granularity=granularity,
+    )
+    if sale.empty:
+        return {"location": location, "periods": [], "items": [], "total_months": 0, "granularity": granularity}
+
+    by_item_month = sale.groupby(["ItemCode", "Month"], as_index=False).agg(
+        sold_thb=("LineTotal", "sum"),
+        sold_master_thb=("Revenue_Master_THB", "sum"),
+        sold_qty=("Quantity", "sum"),
+    )
+    by_item_month.attrs["granularity"] = granularity
+
+    # Lookup maps for item_name and brand
+    item_name_map = {}
+    if "ItemName" in df_item_master.columns:
+        im = df_item_master[["ItemCode", "ItemName"]].drop_duplicates(subset=["ItemCode"])
+        item_name_map = dict(zip(im["ItemCode"].astype(str), im["ItemName"].astype(str)))
+
+    brand_map = dict(zip(sale["ItemCode"].astype(str), sale["Brand"].fillna("Unknown").astype(str)))
+
+    periods, total_months, rows = _months_table_from_groupby(by_item_month, "ItemCode", top_n)
+
+    items = []
+    for r in rows:
+        ic = r.pop("ItemCode")
+        items.append({
+            "item_code": ic,
+            "item_name": item_name_map.get(ic, ic),
+            "brand": brand_map.get(ic, "Unknown"),
+            **r,
+        })
+
+    return {
+        "location": location,
+        "periods": periods,
+        "total_months": total_months,
+        "items": items,
+        "granularity": granularity,
+    }
+
+
+def compute_brand_at_location_item_trends(
+    df_raw_sale: pd.DataFrame,
+    df_raw_onhand: pd.DataFrame,
+    df_item_master: pd.DataFrame,
+    df_whs_code: pd.DataFrame,
+    *,
+    location: str,
+    brand: str,
+    year_list: Optional[list[int]] = None,
+    top_n: int = 200,
+    granularity: str = "monthly",
+) -> dict[str, Any]:
+    """Per-item period sales (monthly or weekly) for every product in a brand at a location.
+
+    Returns a wide-form pivot that the frontend can render as an item × month
+    table. Each item also gets a totals row (sum across selected periods) and
+    an average-per-month row.
+
+    Returns
+    -------
+    dict with:
+      - location, brand: echoed back
+      - periods: ["YYYY-MM", ...]  (sorted chronologically, union across items)
+      - items: [
+          {
+            item_code, item_name,
+            total_sold_thb, total_sold_master_thb, total_sold_qty,
+            avg_sold_thb_per_month, avg_sold_master_thb_per_month, avg_sold_qty_per_month,
+            months: [{period, sold_thb, sold_master_thb, sold_qty}, ...]
+          }
+        ]
+      - total_months: int  (count of periods used for the average)
+    """
+    if df_whs_code is None or df_whs_code.empty:
+        return {"location": location, "brand": brand, "periods": [], "items": [], "total_months": 0}
+
+    df_sale, _, _ = nstk.prepare_sales_and_onhand_data(
+        df_raw_sale, df_raw_onhand, df_item_master
+    )
+    sale = _channel_dedup_sale(df_sale)
+    if sale.empty:
+        return {"location": location, "brand": brand, "periods": [], "items": [], "total_months": 0}
+
+    sale = _add_master_revenue(sale, df_item_master)
+
+    whs_map = df_whs_code[["WhsCode", "WhsName"]].copy()
+    whs_map["WhsCode"] = whs_map["WhsCode"].astype(str).str.strip()
+    sale["WhsCode"] = sale["WhsCode"].astype(str).str.strip()
+    sale = sale.merge(whs_map, on="WhsCode", how="left")
+    sale = sale.dropna(subset=["WhsName"])
+
+    # Apply location consolidation
+    from app.utils.location_consolidation import add_consolidated_column, resolve_location_name
+    _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
+    sale = add_consolidated_column(sale, _whs_lookup)
+    sale["WhsName"] = sale["ConsolidatedLocation"]
+
+    location = resolve_location_name(location, sale["WhsName"].unique())
+    sale = sale[sale["WhsName"] == location]
+    if sale.empty:
+        return {"location": location, "brand": brand, "periods": [], "items": [], "total_months": 0}
+
+    sale["Brand"] = sale["Brand"].fillna("Unknown")
+    sale = sale[sale["Brand"] == brand]
+    if sale.empty:
+        return {"location": location, "brand": brand, "periods": [], "items": [], "total_months": 0}
+
+    if year_list:
+        sale = sale[sale["DocDate"].dt.year.isin(year_list)]
+        if sale.empty:
+            return {"location": location, "brand": brand, "periods": [], "items": [], "total_months": 0}
+
+    from app.utils.period_granularity import (
+        normalize_granularity, period_start_series, format_period_label,
+    )
+    granularity = normalize_granularity(granularity)
+    sale["Month"] = period_start_series(sale["DocDate"], granularity)
+
+    # Aggregate per item × period
+    by_item_month = sale.groupby(["ItemCode", "Month"], as_index=False).agg(
+        sold_thb=("LineTotal", "sum"),
+        sold_master_thb=("Revenue_Master_THB", "sum"),
+        sold_qty=("Quantity", "sum"),
+    )
+
+    # Union of all periods across items (so the table has a consistent header)
+    periods_ts = sorted(by_item_month["Month"].unique())
+    period_strs = [format_period_label(p, granularity) for p in periods_ts]
+    total_months = len(period_strs)
+
+    # Item name lookup
+    item_name_map = {}
+    if "ItemName" in df_item_master.columns:
+        im = df_item_master[["ItemCode", "ItemName"]].drop_duplicates(subset=["ItemCode"])
+        item_name_map = dict(zip(im["ItemCode"].astype(str), im["ItemName"].astype(str)))
+
+    # Per-item totals (used for sorting — top_n by revenue)
+    per_item_totals = (
+        by_item_month.groupby("ItemCode", as_index=False)
+        .agg(
+            total_sold_thb=("sold_thb", "sum"),
+            total_sold_master_thb=("sold_master_thb", "sum"),
+            total_sold_qty=("sold_qty", "sum"),
+        )
+        .sort_values("total_sold_thb", ascending=False)
+    )
+    if top_n and top_n > 0:
+        per_item_totals = per_item_totals.head(top_n)
+
+    # Build per-item month dict for quick lookup
+    grouped = by_item_month.groupby("ItemCode")
+
+    items = []
+    for _, row in per_item_totals.iterrows():
+        ic = str(row["ItemCode"])
+        if ic not in grouped.groups:
+            continue
+        sub = grouped.get_group(ic).set_index("Month")
+
+        months = []
+        for p_ts, p_str in zip(periods_ts, period_strs):
+            if p_ts in sub.index:
+                m = sub.loc[p_ts]
+                months.append({
+                    "period": p_str,
+                    "sold_thb": round(float(m["sold_thb"]), 2),
+                    "sold_master_thb": round(float(m["sold_master_thb"]), 2),
+                    "sold_qty": int(round(float(m["sold_qty"]))),
+                })
+            else:
+                months.append({
+                    "period": p_str,
+                    "sold_thb": 0.0,
+                    "sold_master_thb": 0.0,
+                    "sold_qty": 0,
+                })
+
+        total_thb = float(row["total_sold_thb"])
+        total_master_thb = float(row["total_sold_master_thb"])
+        total_qty = float(row["total_sold_qty"])
+        # Average only over months where data exists in the selection window
+        denom = max(1, total_months)
+
+        items.append({
+            "item_code": ic,
+            "item_name": item_name_map.get(ic, ic),
+            "total_sold_thb": round(total_thb, 2),
+            "total_sold_master_thb": round(total_master_thb, 2),
+            "total_sold_qty": int(round(total_qty)),
+            "avg_sold_thb_per_month": round(total_thb / denom, 2),
+            "avg_sold_master_thb_per_month": round(total_master_thb / denom, 2),
+            "avg_sold_qty_per_month": round(total_qty / denom, 2),
+            "months": months,
+        })
+
+    return {
+        "location": location,
+        "brand": brand,
+        "periods": period_strs,
+        "items": items,
+        "total_months": total_months,
+        "granularity": granularity,
+    }

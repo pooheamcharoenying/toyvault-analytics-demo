@@ -1,7 +1,7 @@
 """Channel Analytics — channel detail, channel list, channel-location mapping.
 
-Business context: A "channel" (Sale.GroupName) is a sales category like "Shop", "Online",
-"Robinson", "Central". One channel maps to MANY physical locations (WhsCode). This module
+Business context: A "channel" (Sale.GroupName) is a sales category like "Shop", "E-Commerce",
+"Pinnacle", "Grandway". One channel maps to MANY physical locations (WhsCode). This module
 makes that mapping explicit and provides per-channel and per-location-within-channel metrics.
 """
 from __future__ import annotations
