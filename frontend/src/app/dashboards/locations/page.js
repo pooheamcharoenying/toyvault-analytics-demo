@@ -80,6 +80,18 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
   const healthChartRef = useRef(null);
   const scatterChartRef = useRef(null);
 
+  // Locations that have a planogram (Master Con set). The Planogram button only
+  // shows for these; other locations (warehouses / online / non-Master-Con) show
+  // a dash. Normalized (whitespace-insensitive) so spacing variants still match.
+  const [planogramLocs, setPlanogramLocs] = useState(null);
+  useEffect(() => {
+    api.get("/api/planogram_locations")
+      .then((res) => setPlanogramLocs(new Set(res.data?.normalized || [])))
+      .catch(() => setPlanogramLocs(new Set()));
+  }, []);
+  const hasPlanogram = (loc) =>
+    planogramLocs && planogramLocs.has(String(loc || "").replace(/\s+/g, "").toLowerCase());
+
   const loadPerf = useCallback((years, signal) => {
     setLoading(true);
     setError(null);
@@ -158,6 +170,33 @@ function PerformanceTab({ selectedYears, toggleYear, onLocationClick }) {
           )}
         </span>
       ),
+    },
+    {
+      key: "planogram_action", label: "Planogram", sortable: false,
+      render: (_val, row) => {
+        // Only the Master Con set of locations has a planogram. Everything else
+        // (warehouses, online, non-Master-Con stores) shows a dash rather than a
+        // button that leads to an empty page.
+        if (!hasPlanogram(row.location)) {
+          return (
+            <span
+              className="inline-block px-2 py-1 border border-transparent text-xs text-gray-300"
+              title="No planogram for this location"
+            >
+              —
+            </span>
+          );
+        }
+        return (
+          <Link
+            href={`/dashboards/locations/${encodeURIComponent(row.location)}/planogram`}
+            className="inline-block whitespace-nowrap px-2 py-1 rounded border border-[var(--nichi-blue)] text-[var(--nichi-blue)] text-xs font-semibold hover:bg-[var(--nichi-blue)] hover:text-white transition-colors"
+            title={`Set shelf minimums for ${row.location}`}
+          >
+            Planogram
+          </Link>
+        );
+      },
     },
     { key: "abcde_class", label: "Tier", render: (v) => <AbcdeBadge tier={v} context="by company revenue" /> },
     { key: "health_score", label: "Health", render: (v) => {
