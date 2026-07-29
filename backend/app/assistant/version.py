@@ -10,10 +10,15 @@ Keep a one-line note in CHANGES when bumping, so an old answer's version is
 meaningful when someone reads it back weeks later.
 """
 
-BOT_VERSION = "1.0.12"
+BOT_VERSION = "1.0.13"
 
 # version -> what changed (newest first). Human-readable, for our own reference.
 CHANGES = {
+    "1.0.13": "Let the bot DO the math. Prompt rule #1 no longer forbids arithmetic — "
+              "it may now derive figures from retrieved numbers (run-rate projections, "
+              "growth/YoY/MoM %, shares, sums, averages, per-unit, days of cover) and "
+              "must show its working; only the INPUTS must come from tools. Fixes the "
+              "bot refusing to project a partial month's sales to a full-month run rate.",
     "1.0.12": "Make the /reset (and /help) acknowledgement reliable: send it via "
               "push instead of the reply token, guard the thread reset, and RETRY "
               "transient LINE push failures (429/5xx) — a one-off 500 was silently "
