@@ -328,6 +328,9 @@ export default function LocationPlanogramPage() {
                   <Th right>Monthly Velocity</Th>
                   <Th right>Sold Qty</Th>
                   <Th right>On-Hand Qty</Th>
+                  <Th right title="Demand-based shelf target for the current month, from the AI demand-ceiling engine (corrects for past stockouts + seasonality). Read-only preview.">
+                    AI Suggested Planogram
+                  </Th>
                   <Th right>Min Units on Shelf</Th>
                 </tr>
               </thead>
@@ -362,6 +365,9 @@ export default function LocationPlanogramPage() {
                       <Td right>{fmtQty(i.sold_qty)}</Td>
                       <Td right>{fmtQty(i.onhand_qty)}</Td>
                       <Td right>
+                        <AiSuggestion item={i} />
+                      </Td>
+                      <Td right>
                         <input
                           type="number"
                           min={0}
@@ -372,7 +378,7 @@ export default function LocationPlanogramPage() {
                           }
                           disabled={data?.storage_available === false}
                           className={`w-24 px-2 py-1 border rounded text-right ${
-                            changed ? "border-[var(--nichi-blue)] bg-teal-50 font-semibold" : "border-gray-300"
+                            changed ? "border-[var(--nichi-blue)] bg-blue-50 font-semibold" : "border-gray-300"
                           }`}
                         />
                       </Td>
@@ -381,7 +387,7 @@ export default function LocationPlanogramPage() {
                 })}
                 {!visible.length && (
                   <tr>
-                    <td colSpan={9 + months.length} className="p-8 text-center text-gray-500">
+                    <td colSpan={10 + months.length} className="p-8 text-center text-gray-500">
                       {items.length ? "No SKUs match that filter." : "No catalog items for this location."}
                     </td>
                   </tr>
@@ -410,6 +416,29 @@ export default function LocationPlanogramPage() {
           </div>
         )}
       </main>
+    </div>
+  );
+}
+
+function AiSuggestion({ item }) {
+  const v = item.ai_suggested_planogram;
+  if (v == null) return <span className="text-gray-300">—</span>;
+  const conf = item.ai_confidence;
+  const color =
+    conf === "high" ? "text-green-700" : conf === "medium" ? "text-amber-600" : "text-gray-500";
+  const title = [
+    `AI suggested (this month): ${v} units`,
+    `Peak: ${item.ai_peak_planogram} in ${item.ai_peak_month}`,
+    `Base demand/mo (deseasonalized): ${item.ai_base_demand}`,
+    `Status: ${item.ai_status}`,
+    `Confidence: ${conf} — ${item.ai_months_history} mo history, seasonality from ${item.ai_seasonal_source}`,
+  ].join("\n");
+  return (
+    <div title={title} className="inline-flex flex-col items-end leading-tight">
+      <span className={`font-semibold ${color}`}>{v}</span>
+      <span className="text-[11px] text-gray-400">
+        peak {item.ai_peak_planogram} · {conf}
+      </span>
     </div>
   );
 }

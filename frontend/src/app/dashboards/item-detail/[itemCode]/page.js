@@ -142,12 +142,19 @@ export default function ItemDetailPage() {
     .map((l) => ({
       name: l.whs_name.length > 30 ? l.whs_name.substring(0, 28) + "..." : l.whs_name,
       fullName: l.whs_name,
+      whs_code: l.whs_code,
       "On-Hand Qty": l.onhand_qty,
       "Sold Qty": l.lifetime_sold_qty,
     }));
 
   const chartData = showAllBars ? allChartData : allChartData.slice(0, BAR_CHART_DEFAULT);
   const hasMoreBars = allChartData.length > BAR_CHART_DEFAULT;
+
+  // Lookup: chart-axis-label → whs_code for clickable Y-axis labels
+  const codeByName = useMemo(
+    () => Object.fromEntries(chartData.map((d) => [d.name, d.whs_code])),
+    [chartData]
+  );
 
   const SortIcon = ({ col }) => (
     <span className="ml-1 text-xs opacity-50">
@@ -248,6 +255,12 @@ export default function ItemDetailPage() {
                         <AbcdeBadge tier={data.item_info.abcde_class_overall} context="company-wide" />
                       )}
                     </div>
+                    {data.item_info.master_price != null && data.item_info.master_price > 0 && (
+                      <div className="mt-3 text-sm text-gray-500">
+                        Master Price: <span className="font-semibold text-gray-800">{fmtThb(data.item_info.master_price)}</span>
+                        <span className="text-xs text-gray-400 ml-1">(unit list price from Item Master)</span>
+                      </div>
+                    )}
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                     <div className="bg-blue-50 rounded-lg p-3 text-center">
@@ -362,7 +375,7 @@ export default function ItemDetailPage() {
               {/* Bar chart — On-Hand vs. Lifetime Sold by Location */}
               {allChartData.length > 0 && (
                 <div className="bg-white rounded-xl shadow-md p-6">
-                  <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2 mb-2">
                     <h2 className="text-lg font-semibold text-gray-800">
                       Stock Distribution vs. Sales by Location ({yearLabel})
                       <InfoTooltip text={METRIC_TOOLTIPS.item.onhand_vs_sold} size="md" />
@@ -391,7 +404,34 @@ export default function ItemDetailPage() {
                         type="category"
                         dataKey="name"
                         width={220}
-                        tick={{ fontSize: 12 }}
+                        tick={(tickProps) => {
+                          const { x, y, payload } = tickProps;
+                          const code = codeByName[payload.value];
+                          const baseProps = {
+                            x, y, dy: 4,
+                            textAnchor: "end",
+                            fontSize: 12,
+                          };
+                          if (!code) {
+                            return (
+                              <text {...baseProps} fill="#374151">
+                                {payload.value}
+                              </text>
+                            );
+                          }
+                          const href = `/dashboards/item-detail/${encodeURIComponent(data.item_info.item_code)}/${encodeURIComponent(code)}`;
+                          return (
+                            <text
+                              {...baseProps}
+                              fill="var(--nichi-blue)"
+                              style={{ cursor: "pointer", textDecoration: "underline" }}
+                              onClick={() => router.push(href)}
+                            >
+                              <title>{`Open ${data.item_info.item_code} at ${payload.value}`}</title>
+                              {payload.value}
+                            </text>
+                          );
+                        }}
                       />
                       <Tooltip
                         formatter={(value, name) => [value.toLocaleString(), name]}
@@ -494,6 +534,85 @@ export default function ItemDetailPage() {
                     </tfoot>
                   </table>
                 </div>
+              </div>
+
+              {/* Purchase History (GRPO) — company-wide, for stock-age context */}
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h2 className="text-lg font-semibold text-gray-800 mb-2">
+                  Purchase History — {data.item_info.item_code} ({yearLabel})
+                </h2>
+                <p className="text-xs text-gray-500 mb-4">
+                  Every import receipt (GRPO) for this item. Useful for understanding how old the current on-hand stock is and tracking FX / unit-cost trends across shipments.
+                </p>
+                {(!data.purchases || data.purchases.length === 0) ? (
+                  <p className="text-sm text-gray-500 italic">
+                    No GRPO records found for this item in the selected period.
+                  </p>
+                ) : (
+                  <>
+                    {(() => {
+                      const ps = data.purchases;
+                      const totalQty = ps.reduce((s, p) => s + (p.qty || 0), 0);
+                      const totalThb = ps.reduce((s, p) => s + (p.fob_thb_total || 0), 0);
+                      const earliest = ps[0]?.date;
+                      const latest = ps[ps.length - 1]?.date;
+                      const ageDays = latest ? Math.floor((new Date() - new Date(latest)) / (1000 * 60 * 60 * 24)) : null;
+                      return (
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                          <div className="bg-purple-50 rounded-lg p-3 text-center">
+                            <div className="text-xs text-purple-600 uppercase font-semibold">Total Received</div>
+                            <div className="text-lg font-bold text-purple-900">{fmtQty(totalQty)} units</div>
+                          </div>
+                          <div className="bg-purple-50 rounded-lg p-3 text-center">
+                            <div className="text-xs text-purple-600 uppercase font-semibold">Total FOB Cost</div>
+                            <div className="text-lg font-bold text-purple-900">{fmtThb(totalThb)}</div>
+                          </div>
+                          <div className="bg-purple-50 rounded-lg p-3 text-center">
+                            <div className="text-xs text-purple-600 uppercase font-semibold">First Received</div>
+                            <div className="text-lg font-bold text-purple-900">{earliest || "—"}</div>
+                          </div>
+                          <div className="bg-purple-50 rounded-lg p-3 text-center">
+                            <div className="text-xs text-purple-600 uppercase font-semibold">Last Received</div>
+                            <div className="text-lg font-bold text-purple-900">
+                              {latest || "—"}
+                              {ageDays != null && <span className="text-xs text-purple-600 block">({ageDays} days ago)</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-gray-50 border-b">
+                            <th className="px-3 py-2 text-left font-semibold text-gray-600">Date</th>
+                            <th className="px-3 py-2 text-right font-semibold text-gray-600">Qty</th>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-600">Vendor</th>
+                            <th className="px-3 py-2 text-right font-semibold text-gray-600">Unit FOB</th>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-600">Currency</th>
+                            <th className="px-3 py-2 text-right font-semibold text-gray-600">FX Rate</th>
+                            <th className="px-3 py-2 text-right font-semibold text-gray-600">FOB Total (THB)</th>
+                            <th className="px-3 py-2 text-left font-semibold text-gray-600">Received At</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.purchases.map((p, i) => (
+                            <tr key={`${p.date}-${i}`} className={`border-b ${i % 2 === 0 ? "bg-white" : "bg-gray-50/50"}`}>
+                              <td className="px-3 py-2 font-mono">{p.date}</td>
+                              <td className="px-3 py-2 text-right font-mono">+{fmtQty(p.qty)}</td>
+                              <td className="px-3 py-2 text-gray-700">{p.vendor || "—"}</td>
+                              <td className="px-3 py-2 text-right font-mono">{p.unit_price_fob?.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                              <td className="px-3 py-2 font-mono text-xs">{p.currency || "—"}</td>
+                              <td className="px-3 py-2 text-right font-mono">{p.fx_rate}</td>
+                              <td className="px-3 py-2 text-right font-mono">{fmtThb(p.fob_thb_total)}</td>
+                              <td className="px-3 py-2 text-xs text-gray-500">{p.whs_name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
               </div>
             </>
           )}

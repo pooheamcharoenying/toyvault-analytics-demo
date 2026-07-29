@@ -59,7 +59,29 @@ export default function ChannelDetailPage() {
     params.set("channel", channelName);
     selectedYears.forEach((y) => params.append("year_list", String(y)));
     api.get(`/api/channel_detail?${params}`, { signal })
-      .then((res) => { setData(res.data); setLoading(false); })
+      .then((res) => {
+        const d = res.data || {};
+        // Server-side now returns net_revenue_thb on unrounded aggregates.
+        // Fallback kept in case of a stale cached response.
+        if (Array.isArray(d.locations)) {
+          d.locations = d.locations.map((l) => ({
+            ...l,
+            net_revenue_thb: l.net_revenue_thb != null
+              ? l.net_revenue_thb
+              : (l.sold_master_thb ?? 0) - (l.retailer_cut_thb ?? 0),
+          }));
+        }
+        if (Array.isArray(d.brands)) {
+          d.brands = d.brands.map((b) => ({
+            ...b,
+            net_revenue_thb: b.net_revenue_thb != null
+              ? b.net_revenue_thb
+              : (b.sold_master_thb ?? 0) - (b.retailer_cut_thb ?? 0),
+          }));
+        }
+        setData(d);
+        setLoading(false);
+      })
       .catch((err) => { if (!isAbortError(err)) { setError(err.message); setLoading(false); } });
   }, [channelName, selectedYears]);
 
@@ -73,18 +95,23 @@ export default function ChannelDetailPage() {
 
   const handleExportLocations = () => {
     if (!data?.locations) return;
-    const headers = ["WhsCode", "Location", "Revenue (THB, Actual)", "Revenue (THB, Master)", "Share (%)", "Sold Qty", "On-Hand Qty", "On-Hand Value (THB, Master)", "Brands", "Items", "Rev/Inventory"];
+    const headers = ["WhsCode", "Location", "Revenue (THB, Master)", "Retailer Cut (THB)", "Revenue (THB, Actual)", "Revenue (THB, Invoiced)", "Share (%)", "Sold Qty", "On-Hand Qty", "On-Hand Value (THB, Master)", "Brands", "Items", "Rev/Inventory", "GP Commission (THB)", "Discount (THB)", "Retailer Cut %"];
     const rows = data.locations.map((l) => [
-      l.whs_code, l.whs_name, l.revenue, l.sold_master_thb, l.revenue_pct, l.sold_qty,
-      l.onhand_qty, l.onhand_thb, l.brand_count, l.item_count, l.revenue_per_inv,
+      l.whs_code, l.whs_name, l.sold_master_thb, l.retailer_cut_thb, l.net_revenue_thb, l.revenue,
+      l.revenue_pct, l.sold_qty, l.onhand_qty, l.onhand_thb, l.brand_count, l.item_count, l.revenue_per_inv,
+      l.gp_commission_thb, l.discount_thb, l.retailer_cut_pct,
     ]);
     downloadCsv(`channel_${channelName}_locations_${yearLabel.replace(/, /g, "_")}.csv`, headers, rows);
   };
 
   const handleExportBrands = () => {
     if (!data?.brands) return;
-    const headers = ["Brand", "Revenue (THB, Actual)", "Revenue (THB, Master)", "Share (%)", "Sold Qty", "Items"];
-    const rows = data.brands.map((b) => [b.brand, b.revenue, b.sold_master_thb, b.revenue_pct, b.sold_qty, b.item_count]);
+    const headers = ["Brand", "Revenue (THB, Master)", "Retailer Cut (THB)", "Revenue (THB, Actual)", "Revenue (THB, Invoiced)", "Share (%)", "Sold Qty", "Items", "GP Commission (THB)", "Discount (THB)", "Retailer Cut %"];
+    const rows = data.brands.map((b) => [
+      b.brand, b.sold_master_thb, b.retailer_cut_thb, b.net_revenue_thb, b.revenue,
+      b.revenue_pct, b.sold_qty, b.item_count,
+      b.gp_commission_thb, b.discount_thb, b.retailer_cut_pct,
+    ]);
     downloadCsv(`channel_${channelName}_brands_${yearLabel.replace(/, /g, "_")}.csv`, headers, rows);
   };
 
@@ -226,8 +253,18 @@ export default function ChannelDetailPage() {
                     ),
                   },
                   { key: "whs_code", label: "Code" },
-                  { key: "revenue", label: "Revenue (THB, Actual Sales)", render: (v) => fmtThb(v) },
-                  { key: "sold_master_thb", label: "Revenue (THB, Master)", render: (v) => fmtThb(v) },
+                  { key: "sold_master_thb", label: "Revenue (THB, Master)", render: (v) => fmtThb(v),
+                    tooltip: "Top-line at list price. = Revenue (Actual) + Retailer Cut." },
+                  {
+                    key: "retailer_cut_thb", label: "Retailer Cut (THB)", render: (v) => fmtThb(v),
+                    tooltip: "What the retailer keeps: GP (consignment) + discount (credit).",
+                  },
+                  {
+                    key: "net_revenue_thb", label: "Revenue (THB, Actual)", render: (v) => fmtThb(v),
+                    tooltip: "What Nichi keeps after the retailer's cut. Master − Retailer Cut.",
+                  },
+                  { key: "revenue", label: "Revenue (THB, Invoiced)", render: (v) => fmtThb(v),
+                    tooltip: "SAP LineTotal — gross invoiced amount." },
                   { key: "revenue_pct", label: "Share (%)", render: (v) => fmtPct(v) },
                   { key: "sold_qty", label: "Sold Qty", render: (v) => fmtQty(v) },
                   { key: "onhand_qty", label: "On-Hand Qty", render: (v) => fmtQty(v) },
@@ -235,6 +272,7 @@ export default function ChannelDetailPage() {
                   { key: "brand_count", label: "Brands" },
                   { key: "item_count", label: "Items" },
                   { key: "revenue_per_inv", label: "Rev/Inventory", render: (v) => v != null ? v.toFixed(2) + "x" : "—" },
+                  { key: "retailer_cut_pct", label: "Retailer Cut %", render: (v) => fmtPct(v) },
                 ]}
                 data={data.locations || []}
                 defaultSort="revenue"
@@ -262,11 +300,22 @@ export default function ChannelDetailPage() {
                       </Link>
                     ),
                   },
-                  { key: "revenue", label: "Revenue (THB, Actual Sales)", render: (v) => fmtThb(v) },
-                  { key: "sold_master_thb", label: "Revenue (THB, Master)", render: (v) => fmtThb(v) },
+                  { key: "sold_master_thb", label: "Revenue (THB, Master)", render: (v) => fmtThb(v),
+                    tooltip: "Top-line at list price." },
+                  {
+                    key: "retailer_cut_thb", label: "Retailer Cut (THB)", render: (v) => fmtThb(v),
+                    tooltip: "GP Commission + credit-channel discount.",
+                  },
+                  {
+                    key: "net_revenue_thb", label: "Revenue (THB, Actual)", render: (v) => fmtThb(v),
+                    tooltip: "What Nichi keeps after the retailer's cut. Master − Retailer Cut.",
+                  },
+                  { key: "revenue", label: "Revenue (THB, Invoiced)", render: (v) => fmtThb(v),
+                    tooltip: "SAP LineTotal." },
                   { key: "revenue_pct", label: "Share (%)", render: (v) => fmtPct(v) },
                   { key: "sold_qty", label: "Sold Qty", render: (v) => fmtQty(v) },
                   { key: "item_count", label: "Items" },
+                  { key: "retailer_cut_pct", label: "Retailer Cut %", render: (v) => fmtPct(v) },
                 ]}
                 data={data.brands || []}
                 defaultSort="revenue"

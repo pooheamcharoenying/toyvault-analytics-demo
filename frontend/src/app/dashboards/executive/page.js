@@ -291,9 +291,10 @@ export default function ExecutiveDashboardPage() {
               <p className="text-sm text-slate-500">Data not ready. Check the status bar above.</p>
             )}
             {summary?.totals && (
+              <>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                <KpiCard title="Lifetime Revenue (THB, Actual Sales)" value={fmtThb(summary.totals.sold_thb)} tooltip={METRIC_TOOLTIPS.executive.lifetime_sold_thb} />
-                <KpiCard title="Lifetime Revenue (THB, Master)" value={fmtThb(summary.totals.sold_master_thb)} tooltip="Revenue calculated at Master (list) Price. Comparison with Actual Sales reveals discounting behaviour." />
+                <KpiCard title="Lifetime Revenue (THB, Invoiced)" value={fmtThb(summary.totals.sold_thb)} tooltip="SAP LineTotal — gross invoiced amount. For consignment this equals Master (GP still inside). For what Nichi actually keeps, see Revenue (Actual)." />
+                <KpiCard title="Lifetime Revenue (THB, Master)" value={fmtThb(summary.totals.sold_master_thb)} tooltip="Top-line revenue at master (list) price. = Revenue (Actual) + Retailer Cut." />
                 <KpiCard title="Lifetime Sold (qty)" value={fmtQty(summary.totals.sold_qty)} tooltip={METRIC_TOOLTIPS.executive.lifetime_sold_qty} />
                 <KpiCard
                   title="On-Hand (THB @ Master Price)"
@@ -302,6 +303,39 @@ export default function ExecutiveDashboardPage() {
                 />
                 <KpiCard title="On-Hand (qty)" value={fmtQty(summary.totals.onhand_qty)} tooltip={METRIC_TOOLTIPS.executive.onhand_qty} />
               </div>
+              {/* Cost of Channel row — unified GP + credit-channel discount */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mt-4">
+                <KpiCard
+                  title="GP Commission (THB)"
+                  value={fmtThb(summary.totals.gp_commission_thb)}
+                  tooltip="Commission paid to retailers on consignment sales only."
+                />
+                <KpiCard
+                  title="Discount (Credit Channels)"
+                  value={fmtThb(summary.totals.discount_thb)}
+                  tooltip="Implicit discount on credit/outright sales: Revenue (Master) − Revenue (Actual). Economic equivalent of GP commission — the retailer's cut on credit sales."
+                />
+                <KpiCard
+                  title="Retailer Cut (Unified)"
+                  value={fmtThb(summary.totals.retailer_cut_thb)}
+                  tooltip="GP Commission + Discount. Apples-to-apples cost-of-channel across consignment and credit sales."
+                />
+                <KpiCard
+                  title="Retailer Cut %"
+                  value={summary.totals.retailer_cut_pct != null ? `${summary.totals.retailer_cut_pct}%` : "—"}
+                  tooltip="Retailer Cut ÷ Revenue (Master)."
+                />
+                <KpiCard
+                  title="Revenue (Actual, to Nichi)"
+                  value={fmtThb(
+                    summary.totals.net_revenue_thb != null
+                      ? summary.totals.net_revenue_thb
+                      : (summary.totals.sold_master_thb ?? 0) - (summary.totals.retailer_cut_thb ?? 0)
+                  )}
+                  tooltip="What ToyVault actually keeps after the retailer's cut. Revenue (Master) − Retailer Cut. Identity: Master = Actual + Retailer Cut."
+                />
+              </div>
+              </>
             )}
             {summary?.comparison && (
               <div className="rounded-xl border border-slate-200 p-4 bg-white text-sm">

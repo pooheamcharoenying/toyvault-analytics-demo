@@ -50,7 +50,21 @@ export default function ChannelsListPage() {
     const params = new URLSearchParams();
     selectedYears.forEach((y) => params.append("year_list", String(y)));
     api.get(`/api/channel_list?${params}`, { signal })
-      .then((res) => { setData(res.data); setLoading(false); })
+      .then((res) => {
+        const d = res.data || {};
+        if (Array.isArray(d.channels)) {
+          // Server-side now returns net_revenue_thb on unrounded aggregates.
+          // Fallback kept in case of a stale cached response.
+          d.channels = d.channels.map((c) => ({
+            ...c,
+            net_revenue_thb: c.net_revenue_thb != null
+              ? c.net_revenue_thb
+              : (c.sold_master_thb ?? 0) - (c.retailer_cut_thb ?? 0),
+          }));
+        }
+        setData(d);
+        setLoading(false);
+      })
       .catch((err) => { if (!isAbortError(err)) { setError(err.message); setLoading(false); } });
   }, [selectedYears]);
 
@@ -64,10 +78,11 @@ export default function ChannelsListPage() {
 
   const handleExport = () => {
     if (!data?.channels) return;
-    const headers = ["Channel", "Description", "Revenue (THB, Actual Sales)", "Revenue (THB, Master)", "Share (%)", "Sold Qty", "Locations", "Brands", "Top Location", "Top Location Revenue"];
+    const headers = ["Channel", "Description", "Revenue (THB, Master)", "Retailer Cut (THB)", "Revenue (THB, Actual)", "Revenue (THB, Invoiced)", "Share (%)", "Sold Qty", "Locations", "Brands", "Top Location", "Top Location Revenue", "GP Commission (THB)", "Discount (THB)", "Retailer Cut %"];
     const rows = data.channels.map((c) => [
-      c.channel, c.description, c.revenue, c.sold_master_thb, c.revenue_pct, c.sold_qty,
-      c.location_count, c.brand_count, c.top_location_name, c.top_location_revenue,
+      c.channel, c.description, c.sold_master_thb, c.retailer_cut_thb, c.net_revenue_thb, c.revenue,
+      c.revenue_pct, c.sold_qty, c.location_count, c.brand_count, c.top_location_name, c.top_location_revenue,
+      c.gp_commission_thb, c.discount_thb, c.retailer_cut_pct,
     ]);
     downloadCsv(`channels_${yearLabel.replace(/, /g, "_")}.csv`, headers, rows);
   };
@@ -176,12 +191,31 @@ export default function ChannelsListPage() {
                     ),
                   },
                   { key: "description", label: "Description" },
-                  { key: "revenue", label: "Revenue (THB, Actual Sales)", render: (v) => fmtThb(v) },
-                  { key: "sold_master_thb", label: "Revenue (THB, Master)", render: (v) => fmtThb(v) },
+                  { key: "sold_master_thb", label: "Revenue (THB, Master)", render: (v) => fmtThb(v),
+                    tooltip: "Top-line at list price. = Revenue (Actual) + Retailer Cut." },
+                  {
+                    key: "retailer_cut_thb", label: "Retailer Cut (THB)",
+                    render: (v) => fmtThb(v),
+                    tooltip: "What the retailer keeps: GP Commission (consignment) + discount (credit). Unified across both sale types.",
+                  },
+                  {
+                    key: "net_revenue_thb", label: "Revenue (THB, Actual)",
+                    render: (v) => fmtThb(v),
+                    tooltip: "What Nichi actually keeps after the retailer's cut. Revenue (Master) − Retailer Cut.",
+                  },
+                  { key: "revenue", label: "Revenue (THB, Invoiced)", render: (v) => fmtThb(v),
+                    tooltip: "SAP LineTotal — gross invoiced amount. For consignment this equals Master (GP still inside)." },
                   { key: "revenue_pct", label: "Share (%)", render: (v) => fmtPct(v) },
                   { key: "sold_qty", label: "Sold Qty", render: (v) => fmtQty(v) },
                   { key: "location_count", label: "Locations" },
                   { key: "brand_count", label: "Brands" },
+                  {
+                    key: "retailer_cut_pct", label: "Retailer Cut %",
+                    render: (v) => fmtPct(v),
+                    tooltip: "Retailer Cut ÷ Revenue (Master). Apples-to-apples channel cost.",
+                  },
+                  { key: "gp_commission_thb", label: "GP Commission (THB)", render: (v) => fmtThb(v) },
+                  { key: "discount_thb", label: "Discount (THB)", render: (v) => fmtThb(v) },
                   { key: "top_location_name", label: "Top Location" },
                   { key: "top_location_revenue", label: "Top Location Revenue", render: (v) => fmtThb(v) },
                 ]}

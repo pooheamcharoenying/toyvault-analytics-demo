@@ -86,44 +86,85 @@ export default function SortableTable({
       )}
       <table className="min-w-full text-sm border-collapse">
         <thead>
+          {/* Headers freeze during vertical scroll. First-column header
+              gets a higher z-index than other headers so the row+column
+              intersection paints on top of everything. */}
           <tr className="bg-gray-50 border-b">
-            {safeColumns.map((col) => (
-              <th
-                key={col.key}
-                role="columnheader"
-                aria-sort={
-                  sortKey === col.key
-                    ? sortDir === "asc" ? "ascending" : "descending"
-                    : "none"
-                }
-                tabIndex={0}
-                onClick={() => toggle(col.key)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    toggle(col.key);
+            {safeColumns.map((col, idx) => {
+              const isFirstColumn = idx === 0;
+              const stickyClasses = isFirstColumn
+                ? "sticky top-0 left-0 z-30 bg-gray-50"
+                : "sticky top-0 z-20 bg-gray-50";
+              // Columns opt OUT with `sortable: false` — used for action
+              // columns (buttons/links) whose key maps to no real field, where
+              // a sort arrow would invite a click that does nothing. Defaults
+              // to sortable so every existing column is unaffected.
+              const isSortable = col.sortable !== false;
+              return (
+                <th
+                  key={col.key}
+                  role="columnheader"
+                  aria-sort={
+                    !isSortable
+                      ? undefined
+                      : sortKey === col.key
+                        ? sortDir === "asc" ? "ascending" : "descending"
+                        : "none"
                   }
-                }}
-                className="px-3 py-2 text-left font-semibold text-gray-700 cursor-pointer hover:bg-gray-100 whitespace-nowrap select-none border-b"
-              >
-                {col.label}
-                {col.tooltip && <InfoTooltip text={col.tooltip} />}
-                {" "}
-                {sortKey === col.key ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
-              </th>
-            ))}
+                  tabIndex={isSortable ? 0 : undefined}
+                  onClick={isSortable ? () => toggle(col.key) : undefined}
+                  onKeyDown={
+                    isSortable
+                      ? (e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            toggle(col.key);
+                          }
+                        }
+                      : undefined
+                  }
+                  className={`px-3 py-2 text-left font-semibold text-gray-700 whitespace-nowrap select-none border-b ${
+                    isSortable ? "cursor-pointer hover:bg-gray-100" : ""
+                  } ${stickyClasses}`}
+                >
+                  {col.label}
+                  {col.tooltip && <InfoTooltip text={col.tooltip} />}
+                  {isSortable && (
+                    <>
+                      {" "}
+                      {sortKey === col.key ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
+                    </>
+                  )}
+                </th>
+              );
+            })}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
-            <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-gray-50"}>
-              {safeColumns.map((col) => (
-                <td key={col.key} className="px-3 py-2 border-b whitespace-nowrap">
-                  {renderCell(col, row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {rows.map((row, i) => {
+            // Alternating row backgrounds — explicit (not bg-inherit) so the
+            // sticky first column also gets the right colour. bg-inherit can
+            // misbehave on sticky cells in some browsers.
+            const rowBg = i % 2 === 0 ? "bg-white" : "bg-gray-50";
+            return (
+              <tr key={i} className={rowBg}>
+                {safeColumns.map((col, idx) => {
+                  const isFirstColumn = idx === 0;
+                  const stickyClasses = isFirstColumn
+                    ? `sticky left-0 z-10 ${rowBg}`
+                    : "";
+                  return (
+                    <td
+                      key={col.key}
+                      className={`px-3 py-2 border-b whitespace-nowrap ${stickyClasses}`}
+                    >
+                      {renderCell(col, row)}
+                    </td>
+                  );
+                })}
+              </tr>
+            );
+          })}
           {sorted.length === 0 && (
             <tr>
               <td colSpan={safeColumns.length} className="px-3 py-8 text-center text-gray-400">

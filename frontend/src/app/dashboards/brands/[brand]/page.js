@@ -26,6 +26,29 @@ import {
 } from "recharts";
 
 /* ------------------------------------------------------------------ */
+/*  helpers                                                           */
+/* ------------------------------------------------------------------ */
+
+/** Parse orient="split" JSON (may arrive double-encoded as a string). */
+function parseSplit(raw) {
+  const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
+  const { columns, data } = obj;
+  return (data || []).map((row) => {
+    const r = {};
+    columns.forEach((c, i) => (r[c] = row[i]));
+    return r;
+  });
+}
+
+/** Chart-safe THB formatter for axis/tooltip. */
+function chartThb(v) {
+  if (v == null) return "";
+  if (Math.abs(v) >= 1e6) return `\u0E3F${(v / 1e6).toFixed(1)}M`;
+  if (Math.abs(v) >= 1e3) return `\u0E3F${(v / 1e3).toFixed(0)}K`;
+  return `\u0E3F${v.toFixed(0)}`;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Stock vs Sales by Location / by Channel charts                    */
 /* ------------------------------------------------------------------ */
 
@@ -169,7 +192,7 @@ function BrandStockVsSalesCharts({ data, showAllLocBars, setShowAllLocBars, bran
             />
           </div>
           <p className="text-xs text-gray-500 mb-3">
-            Same comparison aggregated by sales channel (Grandway, Plaza Group, BookPlay, E-Commerce,
+            Same comparison aggregated by sales channel (Grandway, Plaza Group, BookPlay, Online,
             etc.). On-hand is attributed to the channel each warehouse most often sells through.
           </p>
           <div ref={chChartRef}>
@@ -227,28 +250,6 @@ function BrandStockVsSalesCharts({ data, showAllLocBars, setShowAllLocBars, bran
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  helpers                                                           */
-/* ------------------------------------------------------------------ */
-
-/** Parse orient="split" JSON (may arrive double-encoded as a string). */
-function parseSplit(raw) {
-  const obj = typeof raw === "string" ? JSON.parse(raw) : raw;
-  const { columns, data } = obj;
-  return (data || []).map((row) => {
-    const r = {};
-    columns.forEach((c, i) => (r[c] = row[i]));
-    return r;
-  });
-}
-
-/** Chart-safe THB formatter for axis/tooltip. */
-function chartThb(v) {
-  if (v == null) return "";
-  if (Math.abs(v) >= 1e6) return `\u0E3F${(v / 1e6).toFixed(1)}M`;
-  if (Math.abs(v) >= 1e3) return `\u0E3F${(v / 1e3).toFixed(0)}K`;
-  return `\u0E3F${v.toFixed(0)}`;
-}
 
 /* ------------------------------------------------------------------ */
 /*  column definitions                                                */
@@ -305,9 +306,9 @@ const COLUMNS = [
   },
   {
     key: "Actual_Revenue_THB",
-    label: "Revenue (THB, Actual Sales)",
+    label: "Revenue (THB, Invoiced)",
     fmt: fmtThb,
-    tooltip: "Sum of actual LineTotal from sales transactions — what customers paid",
+    tooltip: "SAP LineTotal — gross invoiced amount. For consignment this equals Master (GP not yet deducted). For Nichi's economic 'Revenue (Actual)' after retailer cut, see Net Revenue column.",
   },
   {
     key: "Total_Cost_THB",
@@ -323,16 +324,51 @@ const COLUMNS = [
       "Commission paid to retailer on consignment sales (LineTotal × U_ACT_GP %)",
   },
   {
-    key: "Net_Revenue_THB",
-    label: "Net Revenue (THB)",
+    key: "Discount_THB",
+    label: "Discount (THB)",
     fmt: fmtThb,
-    tooltip: "Actual Revenue − GP Commission",
+    tooltip:
+      "Implicit discount on credit/outright sales: Revenue (Master) − Revenue (Actual). Economic equivalent of GP commission.",
+  },
+  {
+    key: "Retailer_Cut_THB",
+    label: "Retailer Cut (THB)",
+    fmt: fmtThb,
+    tooltip:
+      "Unified cost of channel: GP Commission + credit-channel discount. What the retailer keeps, regardless of sale type.",
+  },
+  {
+    key: "Retailer_Cut_Pct",
+    label: "Retailer Cut %",
+    fmt: fmtPct,
+    tooltip: "Retailer Cut ÷ Revenue (Master) × 100",
+  },
+  {
+    key: "Net_Revenue_THB",
+    label: "Revenue (THB, Actual)",
+    fmt: fmtThb,
+    tooltip: "What ToyVault actually keeps after the retailer's cut. Revenue (Master) − Retailer Cut. Consistent across consignment and credit sales.",
   },
   {
     key: "Profit_Loss_THB",
     label: "P/L (THB)",
     tooltip:
       "Net Revenue − COGS (FOB). For consignment: Revenue − COGS − GP Commission. For credit: Revenue − COGS.",
+    fmt: (v) => {
+      if (v == null || Number.isNaN(v)) return "\u2014";
+      const formatted = fmtThb(Math.abs(v));
+      return v < 0 ? (
+        <span className="text-red-600">-{formatted}</span>
+      ) : (
+        <span className="text-green-700">+{formatted}</span>
+      );
+    },
+  },
+  {
+    key: "Profit_Loss_True_THB",
+    label: "P/L True (THB)",
+    tooltip:
+      "Revenue (Master) − COGS − Retailer Cut. Unified P/L for consignment and credit sales. Equivalent to P/L legacy in total, but more informative per-channel.",
     fmt: (v) => {
       if (v == null || Number.isNaN(v)) return "\u2014";
       const formatted = fmtThb(Math.abs(v));
@@ -523,8 +559,12 @@ export default function BrandDetailPage() {
         "Revenue (THB, Actual Sales)": r.Actual_Revenue_THB,
         "Total Cost (THB, FOB)": r.Total_Cost_THB,
         "GP Commission (THB)": r.GP_Commission_THB,
+        "Discount (THB)": r.Discount_THB,
+        "Retailer Cut (THB)": r.Retailer_Cut_THB,
+        "Retailer Cut %": r.Retailer_Cut_Pct,
         "Net Revenue (THB)": r.Net_Revenue_THB,
         "P/L (THB)": r.Profit_Loss_THB,
+        "P/L True (THB)": r.Profit_Loss_True_THB,
         "Margin %": r["Profit_Margin_%"],
       })),
       `brand_${brandName}_${selectedYears.sort((a, b) => a - b).join("_")}.csv`
@@ -609,7 +649,7 @@ export default function BrandDetailPage() {
                 fmt={fmtQty}
               />
               <KpiCard
-                label="Revenue (Actual Sales)"
+                label="Revenue (Invoiced)"
                 value={totalRow.Actual_Revenue_THB}
                 fmt={fmtThb}
               />
@@ -624,7 +664,24 @@ export default function BrandDetailPage() {
                 fmt={fmtThb}
               />
               <KpiCard
-                label="Net Revenue"
+                label="Discount (credit)"
+                value={totalRow.Discount_THB}
+                fmt={fmtThb}
+              />
+              <KpiCard
+                label="Retailer Cut (unified)"
+                value={totalRow.Retailer_Cut_THB}
+                fmt={fmtThb}
+                color="text-red-600"
+              />
+              <KpiCard
+                label="Retailer Cut %"
+                value={totalRow.Retailer_Cut_Pct}
+                fmt={(v) => (v != null ? `${v}%` : "—")}
+                color="text-red-600"
+              />
+              <KpiCard
+                label="Revenue (Actual to Nichi)"
                 value={totalRow.Net_Revenue_THB}
                 fmt={fmtThb}
               />
@@ -768,6 +825,18 @@ export default function BrandDetailPage() {
 
           {/* Product table */}
           <div className="bg-white rounded-lg shadow border overflow-hidden">
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-semibold text-gray-700">
+                Products — {brandName} ({selectedYears.sort((a, b) => a - b).join(", ")})
+              </h3>
+              <button
+                onClick={handleExport}
+                disabled={!products.length}
+                className="px-3 py-1.5 text-sm bg-[var(--nichi-blue)] text-white rounded-lg hover:bg-[var(--nichi-blue-dark)] disabled:opacity-40 whitespace-nowrap"
+              >
+                Download CSV
+              </button>
+            </div>
             <SortableTable
               columns={COLUMNS}
               data={rows.map((r) => ({

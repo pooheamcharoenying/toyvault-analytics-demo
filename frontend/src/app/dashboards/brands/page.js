@@ -57,18 +57,22 @@ const CY = new Date().getFullYear();
 const YEAR_OPTIONS = [CY, CY - 1, CY - 2, CY - 3];
 
 const CHANNEL_DESCRIPTIONS = {
-  "Flagship Store": "ToyVault standalone retail stores.",
-  "E-Commerce": "E-commerce via online marketplaces.",
-  Grandway: "Grandway department store branches.",
+  Shop: "ToyVault standalone retail stores (19 locations).",
+  Online: "E-commerce via E-Commerce & E-Commerce.",
+  Grandway: "Grandway department store branches across Thailand.",
   Pinnacle: "Pinnacle department store branches.",
-  "Plaza Group": "Plaza Group shopping center locations.",
+  "Plaza Group": "Plaza Group Group shopping center locations.",
   "DutyFree Plus": "DutyFree Plus duty-free stores.",
-  "Value Mart": "Value Mart outlet locations.",
-  "Pop-Up Events": "Promotional events, pop-ups, and seasonal sales.",
-  KidZone: "KidZone retail locations.",
-  "Heritage Mall": "Heritage Mall department store.",
-  ReadMore: "ReadMore retail locations.",
-  Other: "Miscellaneous other sales channels.",
+  "Value Mart": "Outlet mall locations.",
+  Promotions: "Promotional events, pop-ups, and seasonal sales.",
+  "WH Sale": "Direct warehouse sales.",
+  "KidZone": "KidZone retail locations in Thailand.",
+  "SIAM Takashimaya": "Grandway Takashimaya department store.",
+  BookPlay: "BookPlay bookstore chain (toy sections).",
+  AsiaBook: "Asia Books retail locations.",
+  "Baby-And-Children": "Baby & children specialty retailers.",
+  DiscountWorld: "Don Quijote (DiscountWorld) discount stores.",
+  "7-Eleven": "7-Eleven convenience store consignment.",
 };
 
 function AbcdeBadgeInline({ cls }) {
@@ -94,19 +98,48 @@ const OVERVIEW_COLUMNS = [
     label: "Brand",
     linkFn: (row) => `/dashboards/brands/${encodeURIComponent(row.brand)}`,
   },
-  { key: "revenue_thb", label: "Revenue (THB, Actual Sales)", fmt: fmtThb },
   {
     key: "revenue_master_thb",
     label: "Revenue (THB, Master)",
     fmt: fmtThb,
-    tooltip: "Sold Qty × Master (list) Price",
+    tooltip: "Top-line revenue at the master (list) price. Revenue (Master) = Revenue (Actual) + Retailer Cut.",
+  },
+  {
+    key: "retailer_cut_thb",
+    label: "Retailer Cut (THB)",
+    fmt: fmtThb,
+    tooltip: "What the retailer keeps. For consignment = GP Commission; for credit = discount (Master − invoiced). Unified across both sale types.",
+  },
+  {
+    key: "net_revenue_thb",
+    label: "Revenue (THB, Actual)",
+    fmt: fmtThb,
+    tooltip: "What ToyVault actually keeps after the retailer's cut. Revenue (Master) − Retailer Cut. Consistent across consignment and credit sales.",
+  },
+  {
+    key: "revenue_thb",
+    label: "Revenue (THB, Invoiced)",
+    fmt: fmtThb,
+    tooltip: "SAP LineTotal — the gross invoiced amount. For consignment this equals Master (GP not yet deducted); for credit it's the already-discounted price. Useful for SAP reconciliation; for economic 'Revenue to Nichi' see Revenue (Actual).",
   },
   { key: "cogs_thb", label: "COGS (THB, FOB)", fmt: fmtThb },
   {
     key: "gp_commission_thb",
     label: "GP Commission (THB)",
     fmt: fmtThb,
-    tooltip: "Commission paid to retailers on consignment sales",
+    tooltip: "Retailer's cut on consignment sales (part of Retailer Cut).",
+  },
+  {
+    key: "discount_thb",
+    label: "Discount (THB)",
+    fmt: fmtThb,
+    tooltip: "Retailer's cut on credit/outright sales = Revenue (Master) − Revenue (Invoiced). Part of Retailer Cut.",
+  },
+  {
+    key: "retailer_cut_pct",
+    label: "Retailer Cut %",
+    fmt: fmtPct,
+    tooltip: "Retailer Cut ÷ Revenue (Master). Apples-to-apples cost-of-channel across consignment and credit.",
   },
   {
     key: "gross_margin_thb",
@@ -168,7 +201,16 @@ function OverviewTab({ selectedYears, toggleYear }) {
       .then((res) => {
         const data = res.data;
         if (data.message === "data not ready") { setError("Data is still loading."); return; }
-        setRows(data.rows || []);
+        // net_revenue_thb is now computed server-side on unrounded aggregates
+        // so the identity Master = Net + Retailer Cut holds exactly.
+        // Client-side fallback kept for safety during rollout.
+        const enriched = (data.rows || []).map((r) => ({
+          ...r,
+          net_revenue_thb: r.net_revenue_thb != null
+            ? r.net_revenue_thb
+            : (r.revenue_master_thb ?? 0) - (r.retailer_cut_thb ?? 0),
+        }));
+        setRows(enriched);
       })
       .catch((err) => { if (!isAbortError(err)) setError(err.response?.data?.error || err.message); })
       .finally(() => setLoading(false));
@@ -206,10 +248,14 @@ function OverviewTab({ selectedYears, toggleYear }) {
     downloadCsvFromObjects(
       rows.map((r) => ({
         Brand: r.brand,
-        "Revenue (THB, Actual Sales)": r.revenue_thb,
         "Revenue (THB, Master)": r.revenue_master_thb,
+        "Retailer Cut (THB)": r.retailer_cut_thb,
+        "Revenue (THB, Actual)": r.net_revenue_thb,
+        "Revenue (THB, Invoiced)": r.revenue_thb,
         "COGS FOB (THB)": r.cogs_thb,
         "GP Commission (THB)": r.gp_commission_thb,
+        "Discount (THB)": r.discount_thb,
+        "Retailer Cut %": r.retailer_cut_pct,
         "Gross Margin (THB)": r.gross_margin_thb,
         "Margin %": r.gross_margin_pct,
         "Sold Qty": r.sold_qty,
