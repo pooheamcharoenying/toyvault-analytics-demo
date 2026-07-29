@@ -24,14 +24,15 @@ class Settings(BaseSettings):
 
     # --- MongoDB (app-owned collections only: users, planogram, assistant threads,
     #     LINE bindings). NOT the analytics data source — that stays Excel/Spaces.
-    #     Supply MONGODB_URI directly (Railway), or MONGODB_USER_ME +
-    #     MONGODB_PASSWORD_ME + MONGODB_HOST for local dev (assembled in mongo_store).
-    #     Everything is scoped to MONGODB_DB; the cluster is shared, isolation is by
-    #     database name. Unset => Mongo-backed features are disabled. Never commit. ---
+    #     Cluster host + DB are baked in below (neither is a secret); at runtime you
+    #     only supply the two credentials MONGODB_USER_ME + MONGODB_PASSWORD_ME as env
+    #     vars and mongo_store assembles the mongodb+srv URI. (MONGODB_URI still wins
+    #     if set, as a full-override escape hatch.) Everything is scoped to MONGODB_DB;
+    #     the cluster is shared, so isolation is by database name. Creds never committed. ---
     MONGODB_URI: str = ""
     MONGODB_USER_ME: str = ""
     MONGODB_PASSWORD_ME: str = ""
-    MONGODB_HOST: str = ""
+    MONGODB_HOST: str = "studysabaiapp.fiqyj.mongodb.net"
     MONGODB_DB: str = "toyvaultdemo"
 
     # --- Per-user auth (login) ---
