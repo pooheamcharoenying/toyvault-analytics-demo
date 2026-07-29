@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from app.utils import nichi_stock as nstk
+from app.utils.sales_dedup import dedup_sale_lines
 
 
 # ---------------------------------------------------------------------------
@@ -55,12 +56,21 @@ def _add_master_revenue(sale: pd.DataFrame, df_item_master: pd.DataFrame) -> pd.
 
 
 def _channel_dedup_sale(df_sale_prepared: pd.DataFrame) -> pd.DataFrame:
-    """Deduplicate sales by (DocEntry, ItemCode, Period, GroupName)."""
+    """Deduplicate sales by (DocEntry, ItemCode, Period, GroupName, WhsCode).
+
+    WhsCode is part of the key because a single SAP DocEntry can cover
+    multiple physical stores within the same retail chain (consignment
+    settlement documents). Each WhsCode within that document is a real
+    distinct sale at a different store. Without WhsCode the dedup silently
+    collapses ~89k legitimate rows (~14% of the dataset) across all
+    multi-store chains (Grandway, Pinnacle, Plaza Group, etc.).
+    """
     df = df_sale_prepared.copy()
     df["DocDate"] = pd.to_datetime(df["DocDate"], errors="coerce")
     df = df.dropna(subset=["DocDate"])
     df["Period"] = df["DocDate"].dt.to_period("M").dt.start_time
-    return df.drop_duplicates(subset=["DocEntry", "ItemCode", "Period", "GroupName"])
+    subset = [c for c in ["DocEntry", "ItemCode", "Period", "GroupName", "WhsCode"] if c in df.columns]
+    return dedup_sale_lines(df, subset)
 
 
 def _prepare_onhand_with_price(
@@ -148,7 +158,7 @@ def compute_location_performance(
     sale = sale.dropna(subset=["WhsName"])
 
     # Apply location consolidation (e.g., CT-ลาดพร้าว GP25/GP33 -> CT-ลาดพร้าว)
-    from app.utils.location_consolidation import add_consolidated_column
+    from app.utils.location_consolidation import add_consolidated_column, resolve_location_name
     _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
     sale = add_consolidated_column(sale, _whs_lookup)
     sale["WhsName"] = sale["ConsolidatedLocation"]
@@ -170,11 +180,21 @@ def compute_location_performance(
     sale = sale[~sale["WhsName"].str.lower().str.startswith("pro", na=False)]
     oh = oh[~oh["WhsName"].str.lower().str.startswith("pro", na=False)]
 
+    # Retailer Cut (unified GP + credit discount) — compute per-row before aggregation
+    from app.utils.nichi_stock import compute_retailer_cut_components
+    disc_s, gp_s = compute_retailer_cut_components(sale)
+    sale["_GP"] = gp_s
+    sale["_Discount"] = disc_s
+    sale["_RetailerCut"] = gp_s + disc_s
+
     # --- Aggregate sales by location ---
     sale_by_loc = sale.groupby("WhsName", as_index=False).agg(
         sold_qty=("Quantity", "sum"),
         sold_thb=("LineTotal", "sum"),
         sold_master_thb=("Revenue_Master_THB", "sum"),
+        gp_commission_thb=("_GP", "sum"),
+        discount_thb=("_Discount", "sum"),
+        retailer_cut_thb=("_RetailerCut", "sum"),
     )
 
     # --- Aggregate on-hand by location ---
@@ -228,6 +248,12 @@ def compute_location_performance(
     result["onhand_qty"] = result["onhand_qty"].fillna(0.0)
     result["onhand_thb"] = result["onhand_thb"].fillna(0.0)
     result["dead_stock_thb"] = result["dead_stock_thb"].fillna(0.0)
+    # Fix: locations with inventory but no sales in the filtered year miss these
+    # retailer-cut columns after the outer merge — fillna to prevent NaN leaking
+    # into the JSON response (JSON spec does not allow NaN).
+    result["gp_commission_thb"] = result["gp_commission_thb"].fillna(0.0)
+    result["discount_thb"] = result["discount_thb"].fillna(0.0)
+    result["retailer_cut_thb"] = result["retailer_cut_thb"].fillna(0.0)
 
     # --- Efficiency metrics ---
     result["revenue_per_thb_inventory"] = result.apply(
@@ -343,11 +369,14 @@ def compute_location_performance(
     locations = []
     for _, row in result.iterrows():
         dc = float(row["days_cover"]) if not np.isinf(row["days_cover"]) else None
+        rm = float(row.get("sold_master_thb", 0))
+        rc = float(row.get("retailer_cut_thb", 0))
+        net_rev = rm - rc  # exact, unrounded
         locations.append({
             "location": str(row["WhsName"]),
             "sold_qty": round(float(row["sold_qty"])),
             "sold_thb": round(float(row["sold_thb"]), 2),
-            "sold_master_thb": round(float(row["sold_master_thb"]), 2),
+            "sold_master_thb": round(rm, 2),
             "onhand_qty": round(float(row["onhand_qty"])),
             "onhand_thb": round(float(row["onhand_thb"]), 2),
             "revenue_per_thb_inventory": float(row["revenue_per_thb_inventory"]),
@@ -364,6 +393,11 @@ def compute_location_performance(
             "inventory_gap_qty": round(float(row["inventory_gap_qty"])),
             "inventory_gap_thb": round(float(row["inventory_gap_thb"]), 2),
             "inventory_status": str(row["inventory_status"]),
+            "gp_commission_thb": round(float(row.get("gp_commission_thb", 0)), 2),
+            "discount_thb": round(float(row.get("discount_thb", 0)), 2),
+            "retailer_cut_thb": round(rc, 2),
+            "retailer_cut_pct": round(rc / rm * 100, 2) if rm > 0 else 0,
+            "net_revenue_thb": round(net_rev, 2),
         })
 
     total_sold_qty = round(float(result["sold_qty"].sum()))
@@ -441,13 +475,19 @@ def compute_location_trends(
     location: Optional[str] = None,
     top_n: int = 10,
     year_list: Optional[list[int]] = None,
+    granularity: str = "monthly",
 ) -> dict[str, Any]:
-    """Compute monthly revenue trends per location.
+    """Compute monthly or weekly revenue trends per location.
 
     Returns a dict with:
     - trends: list of {location, months: [{period, sold_thb, sold_qty}]}
-    - periods: sorted list of period strings (YYYY-MM)
+    - periods: sorted list of period strings (YYYY-MM or YYYY-Www format)
+    - granularity: "monthly" | "weekly"
     """
+    from app.utils.period_granularity import (
+        normalize_granularity, period_start_series, format_period_label,
+    )
+    granularity = normalize_granularity(granularity)
     if df_whs_code is None or df_whs_code.empty:
         return {"trends": [], "periods": []}
 
@@ -467,7 +507,7 @@ def compute_location_trends(
     sale = sale.dropna(subset=["WhsName"])
 
     # Apply location consolidation
-    from app.utils.location_consolidation import add_consolidated_column
+    from app.utils.location_consolidation import add_consolidated_column, resolve_location_name
     _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
     sale = add_consolidated_column(sale, _whs_lookup)
     sale["WhsName"] = sale["ConsolidatedLocation"]
@@ -480,10 +520,11 @@ def compute_location_trends(
         if sale.empty:
             return {"trends": [], "periods": []}
 
-    # Monthly aggregation
-    sale["Month"] = sale["DocDate"].dt.to_period("M").dt.start_time
+    # Period aggregation (monthly or weekly)
+    sale["Month"] = period_start_series(sale["DocDate"], granularity)
 
     if location:
+        location = resolve_location_name(location, sale["WhsName"].unique())
         sale = sale[sale["WhsName"] == location]
         if sale.empty:
             return {"trends": [], "periods": []}
@@ -495,7 +536,7 @@ def compute_location_trends(
     )
 
     periods_sorted = sorted(monthly["Month"].unique())
-    period_strs = [p.strftime("%Y-%m") for p in periods_sorted]
+    period_strs = [format_period_label(p, granularity) for p in periods_sorted]
 
     # Pick top N locations by total revenue (unless filtering by one)
     if not location:
@@ -507,35 +548,39 @@ def compute_location_trends(
     for loc_name, grp in monthly.groupby("WhsName"):
         months = []
         for p in periods_sorted:
+            label = format_period_label(p, granularity)
             row = grp[grp["Month"] == p]
             if not row.empty:
                 months.append({
-                    "period": p.strftime("%Y-%m"),
+                    "period": label,
                     "sold_thb": round(float(row.iloc[0]["sold_thb"]), 2),
                     "sold_master_thb": round(float(row.iloc[0]["sold_master_thb"]), 2),
                     "sold_qty": round(float(row.iloc[0]["sold_qty"])),
                 })
             else:
-                months.append({"period": p.strftime("%Y-%m"), "sold_thb": 0.0, "sold_master_thb": 0.0, "sold_qty": 0})
+                months.append({"period": label, "sold_thb": 0.0, "sold_master_thb": 0.0, "sold_qty": 0})
         trends.append({"location": str(loc_name), "months": months})
 
     # Sort trends by total revenue descending
     trends.sort(key=lambda t: sum(m["sold_thb"] for m in t["months"]), reverse=True)
 
     # Annotate the last (possibly partial) month on each location series.
-    try:
-        from app.utils.running_rate import annotate_monthly_series, get_data_as_of_date
-        as_of = get_data_as_of_date(df_raw_sale)
-        for t in trends:
-            annotate_monthly_series(
-                t["months"],
-                as_of,
-                numeric_fields=["sold_thb", "sold_master_thb", "sold_qty"],
-            )
-    except Exception:
-        pass
+    # Running-rate projection only applies to monthly granularity — weekly
+    # bins are short enough that partial-week noise is intentional.
+    if granularity == "monthly":
+        try:
+            from app.utils.running_rate import annotate_monthly_series, get_data_as_of_date
+            as_of = get_data_as_of_date(df_raw_sale)
+            for t in trends:
+                annotate_monthly_series(
+                    t["months"],
+                    as_of,
+                    numeric_fields=["sold_thb", "sold_master_thb", "sold_qty"],
+                )
+        except Exception:
+            pass
 
-    return {"trends": trends, "periods": period_strs}
+    return {"trends": trends, "periods": period_strs, "granularity": granularity}
 
 
 def compute_location_product_mix(
@@ -578,7 +623,7 @@ def compute_location_product_mix(
     sale = sale.merge(whs_map, on="WhsCode", how="left")
 
     # Apply location consolidation
-    from app.utils.location_consolidation import add_consolidated_column
+    from app.utils.location_consolidation import add_consolidated_column, resolve_location_name
     _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
     sale = add_consolidated_column(sale, _whs_lookup)
     sale["WhsName"] = sale["ConsolidatedLocation"]
@@ -587,9 +632,30 @@ def compute_location_product_mix(
     oh = add_consolidated_column(oh, _whs_lookup)
     oh["WhsName"] = oh["ConsolidatedLocation"]
 
-    # Filter to the specified location
+    # Filter to the specified location (resolve near-miss spellings against the
+    # names present in BOTH sales and on-hand, so a stock-only location matches too)
+    location = resolve_location_name(
+        location, list(sale["WhsName"].unique()) + list(oh["WhsName"].unique()))
     loc_sale = sale[sale["WhsName"] == location].copy()
     loc_oh = oh[oh["WhsName"] == location].copy()
+
+    # Build a LIFETIME (all-time, pre-year-filter) per-item aggregate at THIS
+    # location. Used by the dead-stock table so a manager can see whether an
+    # item ever sold here historically (a sign of true product-market mismatch)
+    # versus an item that simply hasn't had a chance to sell yet.
+    if not loc_sale.empty:
+        _lifetime_loc = (
+            loc_sale.groupby("ItemCode", as_index=False)
+            .agg(
+                lifetime_sold_qty=("Quantity", "sum"),
+                lifetime_sold_thb_actual=("LineTotal", "sum"),
+                lifetime_sold_thb_master=("Revenue_Master_THB", "sum"),
+            )
+        )
+        _lifetime_loc["ItemCode"] = _lifetime_loc["ItemCode"].astype(str)
+        _lifetime_map = _lifetime_loc.set_index("ItemCode").to_dict(orient="index")
+    else:
+        _lifetime_map = {}
 
     _years = year_list if year_list else ([year] if year is not None else None)
     if _years is not None:
@@ -627,6 +693,22 @@ def compute_location_product_mix(
     desc_map = df_item_master[["ItemCode", "ItemName"]].drop_duplicates("ItemCode")
     item_agg = item_agg.merge(desc_map, on="ItemCode", how="left")
 
+    # Merge current on-hand at this location, per item. Items with no
+    # on-hand here keep 0/0 (stocked-out or never-stocked).
+    loc_oh_by_item = (
+        loc_oh.groupby("ItemCode", as_index=False).agg(
+            onhand_qty=("OnHand", "sum"),
+            onhand_thb=("OnHand_THB", "sum"),
+        )
+        if not loc_oh.empty
+        else pd.DataFrame(columns=["ItemCode", "onhand_qty", "onhand_thb"])
+    )
+    loc_oh_by_item["ItemCode"] = loc_oh_by_item["ItemCode"].astype(str).str.strip()
+    item_agg["ItemCode"] = item_agg["ItemCode"].astype(str).str.strip()
+    item_agg = item_agg.merge(loc_oh_by_item, on="ItemCode", how="left")
+    item_agg["onhand_qty"] = item_agg["onhand_qty"].fillna(0.0)
+    item_agg["onhand_thb"] = item_agg["onhand_thb"].fillna(0.0)
+
     top_items = []
     for _, row in item_agg.head(top_n).iterrows():
         top_items.append({
@@ -636,15 +718,26 @@ def compute_location_product_mix(
             "sold_thb": round(float(row["sold_thb"]), 2),
             "sold_master_thb": round(float(row["sold_master_thb"]), 2),
             "sold_qty": round(float(row["sold_qty"])),
+            "onhand_qty": int(round(float(row["onhand_qty"]))),
+            "onhand_thb": round(float(row["onhand_thb"]), 2),
         })
 
     # --- Non-movers: items in stock but zero recent sales ---
-    # Important: we exclude items that arrived at this location less than
-    # `window_days` ago — they have NOT had a full window to sell, so flagging
-    # them as dead stock is wrong. "Arrival" is the earliest TR IN or GRPO
-    # date for the item at any WhsCode that rolls up to this consolidated
-    # location. If we have no such date, we treat the item as long-tenured
-    # (conservative — still flag it).
+    # To avoid flagging newly-arrived stock as "dead", we enforce tenure in
+    # TWO ways (either is disqualifying):
+    #
+    #   (A) At-location tenure — earliest TR IN / GRPO / sale at a WhsCode
+    #       that rolls up to this consolidated location.
+    #   (B) In-company tenure  — earliest TR IN / TR OUT / GRPO / sale for
+    #       this item anywhere (the first time it appears in any document).
+    #
+    # Rule: exclude if (A) is known AND < window_days, OR (A) is unknown
+    # AND (B) < window_days. If both are unknown we conservatively include.
+    #
+    # This matters because the Nichi Excel is sometimes missing the paper
+    # trail for transfers to sub-codes (e.g. CosmicPlay items show up at
+    # CTMSKP20 with no TR IN to CTMSKP20, but GRPO shows the item first
+    # entered the company weeks ago).
     as_of = loc_sale["DocDate"].max() if not loc_sale.empty else pd.Timestamp.now()
     start = as_of - pd.Timedelta(days=window_days - 1)
 
@@ -656,11 +749,10 @@ def compute_location_product_mix(
     # Build the set of WhsCodes that roll up to this consolidated location
     loc_whs_codes = set(loc_oh["WhsCode"].astype(str).str.strip().unique())
 
-    # --- Earliest stock-in date per (ItemCode) at this consolidated location ---
-    # Combine TR IN + GRPO for WhsCodes belonging to this location.
-    first_in_by_item: dict[str, pd.Timestamp] = {}
+    # --- (A) Earliest stock-in at this consolidated location ---
+    first_in_at_loc: dict[str, pd.Timestamp] = {}
 
-    def _collect_earliest(df_mov: Optional[pd.DataFrame]):
+    def _collect_at_loc(df_mov: Optional[pd.DataFrame]):
         if df_mov is None or df_mov.empty:
             return
         if "WhsCode" not in df_mov.columns or "DocDate" not in df_mov.columns:
@@ -677,23 +769,91 @@ def compute_location_product_mix(
             return
         by_item = m.groupby("ItemCode")["DocDate"].min()
         for ic, dt in by_item.items():
-            cur = first_in_by_item.get(ic)
+            cur = first_in_at_loc.get(ic)
             if cur is None or dt < cur:
-                first_in_by_item[ic] = dt
+                first_in_at_loc[ic] = dt
 
-    _collect_earliest(df_tr_in)
-    _collect_earliest(df_grpo_detail)
+    _collect_at_loc(df_tr_in)
+    _collect_at_loc(df_grpo_detail)
 
-    # Also treat any earlier sale at this location as evidence the item was here
     if not loc_sale.empty:
-        earliest_sale = loc_sale.groupby("ItemCode")["DocDate"].min()
-        for ic, dt in earliest_sale.items():
-            cur = first_in_by_item.get(str(ic))
+        earliest_sale_loc = loc_sale.groupby("ItemCode")["DocDate"].min()
+        for ic, dt in earliest_sale_loc.items():
+            cur = first_in_at_loc.get(str(ic))
             if cur is None or dt < cur:
-                first_in_by_item[str(ic)] = dt
+                first_in_at_loc[str(ic)] = dt
 
-    # "Fresh inbound" cutoff: arrived at this location within the window
+    # --- (B) Earliest stock-in ANYWHERE in the company ---
+    # The first time the item appears in any movement document. If this is
+    # within `window_days` the item simply hasn't existed long enough to
+    # accumulate 90 days of "no sales" — regardless of where the on-hand
+    # snapshot claims it is.
+    # We use the company-wide sale DataFrame (pre-year-filter) so we see the
+    # true earliest sale across all time.
+    first_in_company: dict[str, pd.Timestamp] = {}
+
+    def _collect_company(df_mov: Optional[pd.DataFrame]):
+        if df_mov is None or df_mov.empty:
+            return
+        if "DocDate" not in df_mov.columns or "ItemCode" not in df_mov.columns:
+            return
+        m = df_mov[["ItemCode", "DocDate"]].copy()
+        m["ItemCode"] = m["ItemCode"].astype(str).str.strip()
+        m["DocDate"] = pd.to_datetime(m["DocDate"], errors="coerce")
+        m = m.dropna(subset=["DocDate"])
+        if m.empty:
+            return
+        by_item = m.groupby("ItemCode")["DocDate"].min()
+        for ic, dt in by_item.items():
+            cur = first_in_company.get(ic)
+            if cur is None or dt < cur:
+                first_in_company[ic] = dt
+
+    _collect_company(df_tr_in)
+    _collect_company(df_grpo_detail)
+    # TR OUT also proves the item existed somewhere at that date
+    try:
+        _collect_company(getattr(df_raw_sale, "_tr_out", None))  # usually None
+    except Exception:
+        pass
+    # Use the full (unfiltered, pre-channel-dedup) sale to catch earliest sale anywhere
+    _collect_company(df_sale)
+
+    # "Fresh inbound" cutoff
     fresh_cutoff = as_of - pd.Timedelta(days=window_days - 1)
+
+    # --- (C) MOST-RECENT stock-in at this location ---
+    # An item that ran out mid-window and was refilled has its zero-90d-sales
+    # explained by "it was out then restocked", NOT by dead demand. So if the
+    # latest receipt is within the fresh window, exclude it — same reasoning as a
+    # first-time fresh arrival (the current stock hasn't had a fair selling run).
+    last_in_at_loc: dict[str, pd.Timestamp] = {}
+
+    def _collect_last_in(df_mov: Optional[pd.DataFrame]):
+        if df_mov is None or df_mov.empty:
+            return
+        if "DocDate" not in df_mov.columns or "ItemCode" not in df_mov.columns:
+            return
+        m = df_mov[["ItemCode", "WhsCode", "DocDate"]].copy()
+        m["WhsCode"] = m["WhsCode"].astype(str).str.strip()
+        m = m[m["WhsCode"].isin(loc_whs_codes)]
+        if m.empty:
+            return
+        m["ItemCode"] = m["ItemCode"].astype(str).str.strip()
+        m["DocDate"] = pd.to_datetime(m["DocDate"], errors="coerce")
+        m = m.dropna(subset=["DocDate"])
+        if m.empty:
+            return
+        for ic, dt in m.groupby("ItemCode")["DocDate"].max().items():
+            cur = last_in_at_loc.get(ic)
+            if cur is None or dt > cur:
+                last_in_at_loc[ic] = dt
+
+    _collect_last_in(df_tr_in)
+    _collect_last_in(df_grpo_detail)
+
+    # Item name lookup for the dead-stock rows
+    _name_by_code = dict(zip(desc_map["ItemCode"].astype(str), desc_map["ItemName"].astype(str)))
 
     non_movers = []
     fresh_excluded = 0
@@ -701,22 +861,46 @@ def compute_location_product_mix(
         ic = str(row["ItemCode"])
         if ic in recent_sold_items or float(row["OnHand"]) <= 0:
             continue
-        arrival = first_in_by_item.get(ic)
-        if arrival is not None and arrival >= fresh_cutoff:
-            # Too recent — not enough tenure to call it dead stock
+        arrival_loc = first_in_at_loc.get(ic)
+        arrival_company = first_in_company.get(ic)
+
+        # Exclude if too fresh by either rule (see function docstring)
+        is_fresh = False
+        if arrival_loc is not None and arrival_loc >= fresh_cutoff:
+            is_fresh = True
+        elif arrival_loc is None and arrival_company is not None and arrival_company >= fresh_cutoff:
+            is_fresh = True
+
+        # Restocked within the window -> zero sales is a refill/stockout, not dead
+        _last_in = last_in_at_loc.get(ic)
+        if _last_in is not None and _last_in >= fresh_cutoff:
+            is_fresh = True
+
+        if is_fresh:
             fresh_excluded += 1
             continue
+
+        _lt = _lifetime_map.get(ic, {})
         non_movers.append({
             "item_code": ic,
+            "item_name": _name_by_code.get(ic, ""),
             "brand": str(row.get("Brand", "Unknown")),
             "onhand_qty": round(float(row["OnHand"])),
             "onhand_thb": round(float(row["OnHand_THB"]), 2),
-            "first_seen_at_location": arrival.strftime("%Y-%m-%d") if arrival is not None else None,
+            # Lifetime (all-time) sold AT THIS LOCATION — even though the
+            # item has zero sales in the last 90d, has it ever sold here?
+            # Strong signal of true PMF mismatch vs. a quiet pause.
+            "lifetime_sold_qty": int(round(float(_lt.get("lifetime_sold_qty", 0)))),
+            "lifetime_sold_thb_actual": round(float(_lt.get("lifetime_sold_thb_actual", 0)), 2),
+            "lifetime_sold_thb_master": round(float(_lt.get("lifetime_sold_thb_master", 0)), 2),
+            "first_seen_at_location": arrival_loc.strftime("%Y-%m-%d") if arrival_loc is not None else None,
+            "first_seen_in_company": arrival_company.strftime("%Y-%m-%d") if arrival_company is not None else None,
         })
 
-    # Sort non-movers by value descending and limit
+    # Sort non-movers by value descending. Return ALL dead-stock items —
+    # the frontend table paginates for display, and executives need the real
+    # total (not a truncated view) when deciding markdowns or write-offs.
     non_movers.sort(key=lambda x: x["onhand_thb"], reverse=True)
-    non_movers = non_movers[:top_n]
 
     # --- Brand heatmap: this location vs. company-wide ---
     # Apply same year filter to company-wide sale for consistent comparison
@@ -856,14 +1040,20 @@ def compute_brand_at_location_trend(
     location: str,
     brand: str,
     year_list: Optional[list[int]] = None,
+    granularity: str = "monthly",
 ) -> dict[str, Any]:
-    """Monthly revenue trend for a specific brand at a specific location.
+    """Period-level revenue trend (monthly or weekly) for a brand at a location.
 
     Returns
     -------
     dict with:
       - months: [{period, sold_thb, sold_master_thb, sold_qty}]
+      - granularity: "monthly" | "weekly"
     """
+    from app.utils.period_granularity import (
+        normalize_granularity, period_start_series, format_period_label,
+    )
+    granularity = normalize_granularity(granularity)
     if df_whs_code is None or df_whs_code.empty:
         return {"months": []}
 
@@ -883,11 +1073,12 @@ def compute_brand_at_location_trend(
     sale = sale.dropna(subset=["WhsName"])
 
     # Apply location consolidation
-    from app.utils.location_consolidation import add_consolidated_column
+    from app.utils.location_consolidation import add_consolidated_column, resolve_location_name
     _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
     sale = add_consolidated_column(sale, _whs_lookup)
     sale["WhsName"] = sale["ConsolidatedLocation"]
 
+    location = resolve_location_name(location, sale["WhsName"].unique())
     sale = sale[sale["WhsName"] == location]
     if sale.empty:
         return {"months": []}
@@ -902,7 +1093,7 @@ def compute_brand_at_location_trend(
         if sale.empty:
             return {"months": []}
 
-    sale["Month"] = sale["DocDate"].dt.to_period("M").dt.start_time
+    sale["Month"] = period_start_series(sale["DocDate"], granularity)
     monthly = sale.groupby("Month", as_index=False).agg(
         sold_thb=("LineTotal", "sum"),
         sold_master_thb=("Revenue_Master_THB", "sum"),
@@ -913,24 +1104,25 @@ def compute_brand_at_location_trend(
     months = []
     for _, r in monthly.iterrows():
         months.append({
-            "period": r["Month"].strftime("%Y-%m"),
+            "period": format_period_label(r["Month"], granularity),
             "sold_thb": round(float(r["sold_thb"]), 2),
             "sold_master_thb": round(float(r["sold_master_thb"]), 2),
             "sold_qty": round(float(r["sold_qty"])),
         })
 
-    # Annotate the last (possibly partial) month with a running rate.
-    try:
-        from app.utils.running_rate import annotate_monthly_series, get_data_as_of_date
-        annotate_monthly_series(
-            months,
-            get_data_as_of_date(df_raw_sale),
-            numeric_fields=["sold_thb", "sold_master_thb", "sold_qty"],
-        )
-    except Exception:
-        pass
+    # Running-rate annotation only applies to monthly granularity.
+    if granularity == "monthly":
+        try:
+            from app.utils.running_rate import annotate_monthly_series, get_data_as_of_date
+            annotate_monthly_series(
+                months,
+                get_data_as_of_date(df_raw_sale),
+                numeric_fields=["sold_thb", "sold_master_thb", "sold_qty"],
+            )
+        except Exception:
+            pass
 
-    return {"months": months}
+    return {"months": months, "granularity": granularity}
 
 
 def _months_table_from_groupby(
