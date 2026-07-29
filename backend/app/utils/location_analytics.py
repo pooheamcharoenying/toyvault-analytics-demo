@@ -157,7 +157,7 @@ def compute_location_performance(
     sale = sale.merge(whs_map, on="WhsCode", how="left")
     sale = sale.dropna(subset=["WhsName"])
 
-    # Apply location consolidation (e.g., CT-ลาดพร้าว GP25/GP33 -> CT-ลาดพร้าว)
+    # Apply location consolidation (e.g., CT-Riverside GP25/GP33 -> CT-Riverside)
     from app.utils.location_consolidation import add_consolidated_column, resolve_location_name
     _whs_lookup = dict(zip(whs_map["WhsCode"], whs_map["WhsName"]))
     sale = add_consolidated_column(sale, _whs_lookup)
