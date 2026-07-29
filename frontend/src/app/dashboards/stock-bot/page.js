@@ -187,9 +187,9 @@ function DecisionRulesCard() {
               boutique ×0.6). Main warehouses get unbounded cap.
             </p>
             <p className="ml-5 mt-2">
-              <strong>Example:</strong> a 0.8 unit/day item at Central World →
-              baseline 5 (under 30/mo) × flagship 1.5 = cap 7. Even if Wonderworld
-              holds 850 of that SKU, the bot only sends 6 — bringing Central World
+              <strong>Example:</strong> a 0.8 unit/day item at Grandway Riverside →
+              baseline 5 (under 30/mo) × flagship 1.5 = cap 7. Even if the main warehouse
+              holds 850 of that SKU, the bot only sends 6 — bringing Grandway Riverside
               up to cap. Future restocks happen as the shelf draws down.
             </p>
           </div>

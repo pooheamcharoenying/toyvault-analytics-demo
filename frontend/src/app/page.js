@@ -11,6 +11,17 @@ const SECTIONS = [
     title: "Core",
     cards: [
       {
+        href: "/dashboards/ai-assist",
+        label: "AI Assist",
+        desc: "Ask anything about the business — grounded in your live data",
+        icon: (
+          <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-4 4v-4z" />
+          </svg>
+        ),
+        color: "from-[var(--nichi-blue)] to-blue-600",
+      },
+      {
         href: "/dashboards/actions",
         label: "Priority Actions",
         desc: "Top urgent actions ranked by severity and impact",
@@ -94,6 +105,17 @@ const SECTIONS = [
         color: "from-orange-600 to-orange-500",
       },
       {
+        href: "/dashboards/stock-bot",
+        label: "Stock Bot 🤖",
+        desc: "Profit-aware transfers with shelf-cap awareness",
+        icon: (
+          <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+          </svg>
+        ),
+        color: "from-purple-600 to-indigo-500",
+      },
+      {
         href: "/dashboards/purchase-analytics",
         label: "Purchase Analytics",
         desc: "FOB costs, vendor analysis, working capital",
@@ -134,6 +156,17 @@ const SECTIONS = [
           </svg>
         ),
         color: "from-teal-600 to-teal-500",
+      },
+      {
+        href: "/dashboards/planogram",
+        label: "Planogram",
+        desc: "Set minimum shelf quantities per SKU per location",
+        icon: (
+          <svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 13.875c0 .621.504 1.125 1.125 1.125m0 0h7.5m-7.5 0a1.125 1.125 0 01-1.125-1.125m0 0V5.625m0 0A1.125 1.125 0 014.5 4.5h15A1.125 1.125 0 0120.625 5.625m0 0v13.875m0 0a1.125 1.125 0 01-1.125 1.125m0 0h-7.5m7.5 0c.621 0 1.125-.504 1.125-1.125M12 4.5v15" />
+          </svg>
+        ),
+        color: "from-indigo-600 to-indigo-500",
       },
     ],
   },

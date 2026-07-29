@@ -60,8 +60,8 @@ function downloadActionsCSV(actions) {
 }
 
 /* ── localStorage helpers for acknowledge state ────────────────────── */
-const ACK_STORAGE_KEY = "nichiworld_actions_ack";
-const ACK_DATE_KEY = "nichiworld_actions_ack_date";
+const ACK_STORAGE_KEY = "toyvault_actions_ack";
+const ACK_DATE_KEY = "toyvault_actions_ack_date";
 
 function hashAction(action) {
   // Simple hash from title + type to identify an action across refreshes

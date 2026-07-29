@@ -61,7 +61,7 @@ const TABS = [
 function isOnlineLocation(name) {
   if (!name) return false;
   const lower = name.toLowerCase();
-  return lower.includes("shopee") || lower.includes("lazada") || lower.includes("online");
+  return lower.includes("e-commerce") || lower.includes("online");
 }
 
 

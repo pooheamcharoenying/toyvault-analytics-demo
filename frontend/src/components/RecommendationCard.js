@@ -46,9 +46,9 @@ function RecommendationItem({ rec }) {
  * Fetches and displays rule-based recommendations for a page context.
  *
  * Usage:
- *   <RecommendationPanel context="brand" name="Silverlit" years={[2025]} />
- *   <RecommendationPanel context="location" name="Robinson Rama9" years={[2025]} />
- *   <RecommendationPanel context="item" name="SV20725" years={[2025]} />
+ *   <RecommendationPanel context="brand" name="AeroBot" years={[2025]} />
+ *   <RecommendationPanel context="location" name="Pinnacle Riverside" years={[2025]} />
+ *   <RecommendationPanel context="item" name="AE20725" years={[2025]} />
  */
 export default function RecommendationPanel({ context, name, years }) {
   const [recs, setRecs] = useState([]);

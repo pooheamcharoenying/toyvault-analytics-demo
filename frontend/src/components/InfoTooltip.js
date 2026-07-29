@@ -213,7 +213,7 @@ export const METRIC_TOOLTIPS = {
     cumulative_pct:
       "Cumulative % of total revenue — shows how much of total revenue this product and all higher-ranked products account for. When this reaches 80%, you've identified your A-class items.",
     product_channel_fit:
-      "Shows which products sell well in which channels. Helps allocate the right products to the right sales channels. A product strong in Robinson but weak Online needs different handling in each channel.",
+      "Shows which products sell well in which channels. Helps allocate the right products to the right sales channels. A product strong in Pinnacle but weak Online needs different handling in each channel.",
   },
 
   // === Purchase Analytics ===

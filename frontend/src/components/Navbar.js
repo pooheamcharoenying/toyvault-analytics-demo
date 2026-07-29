@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState, useRef, useEffect } from "react";
-import Cookies from "js-cookie";
+import { useAuthUser } from "@/components/AuthGate";
+import ChangePasswordModal from "@/components/ChangePasswordModal";
 
 /* ─────────────────────────────────────────────
    NAV_ITEMS — single source of truth for navigation.
@@ -27,9 +28,9 @@ const NAV_GROUPS = [
     label: "Inventory & Stock",
     items: [
       { href: "/dashboards/inventory-alerts", label: "Inventory Alerts" },
-      { href: "/dashboards/stock-allocation", label: "Stock Allocation" },
-      { href: "/dashboards/stock-bot", label: "Stock-Bot" },
       { href: "/dashboards/planogram", label: "Planogram" },
+      { href: "/dashboards/stock-allocation", label: "Stock Allocation" },
+      { href: "/dashboards/stock-bot", label: "Stock Bot 🤖" },
       { href: "/dashboards/purchase-analytics", label: "Purchase Analytics" },
     ],
   },
@@ -49,7 +50,6 @@ const NAV_GROUPS = [
       { href: "/dashboards/period-comparison", label: "Period Comparison" },
       { href: "/dashboards/data-quality", label: "Data Quality" },
       { href: "/task1", label: "Barcode Lookup" },
-      { href: "/dashboards/line-setup", label: "LINE Setup" },
     ],
   },
 ];
@@ -137,17 +137,61 @@ function NavDropdown({ label, items, pathname }) {
 }
 
 /* ─────────────────────────────────────────────
+   Account dropdown (name → Connect LINE / change password / logout)
+   ───────────────────────────────────────────── */
+function AccountDropdown({ user, onChangePassword, onLinkLine, onLogout }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    function h(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  const name = user?.display_name || user?.username || "Account";
+  return (
+    <div ref={ref} className="relative ml-2">
+      <button onClick={() => setOpen((o) => !o)}
+              className="flex items-center gap-2 px-2 py-1.5 rounded-md text-sm text-white/85 hover:bg-white/10">
+        <span className="w-6 h-6 rounded-full bg-[var(--nichi-yellow)] text-[var(--nichi-blue-dark)] flex items-center justify-center text-xs font-bold">
+          {name[0]?.toUpperCase()}
+        </span>
+        <span className="max-w-[110px] truncate">{name}</span>
+        <svg className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute top-full right-0 mt-1 w-52 bg-[var(--nichi-blue-dark)] rounded-lg shadow-xl border border-white/10 py-1 z-50">
+          {user?.username && (
+            <div className="px-4 py-1.5 text-[11px] text-white/50 border-b border-white/10">
+              Signed in as {user.username}{user.role === "admin" ? " · admin" : ""}
+            </div>
+          )}
+          <button onClick={() => { setOpen(false); onLinkLine(); }}
+                  className="block w-full text-left px-4 py-2 text-sm text-white/85 hover:bg-white/10">Connect LINE</button>
+          <button onClick={() => { setOpen(false); onChangePassword(); }}
+                  className="block w-full text-left px-4 py-2 text-sm text-white/85 hover:bg-white/10">Change password</button>
+          <button onClick={() => { setOpen(false); onLogout(); }}
+                  className="block w-full text-left px-4 py-2 text-sm text-white/85 hover:bg-white/10">Logout</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
    Main Navbar
    ───────────────────────────────────────────── */
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+  const { user, logout } = useAuthUser() || {};
 
-  const handleLogout = () => {
-    Cookies.remove("auth");
+  const handleLogout = async () => {
+    if (logout) await logout();
     router.push("/");
-    window.location.reload();
   };
 
   return (
@@ -189,12 +233,12 @@ export default function Navbar() {
               />
             ))}
 
-            <button
-              onClick={handleLogout}
-              className="ml-3 px-3 py-1.5 rounded-md text-sm text-white/70 hover:text-white hover:bg-white/10 transition"
-            >
-              Logout
-            </button>
+            <AccountDropdown
+              user={user}
+              onChangePassword={() => setShowPw(true)}
+              onLinkLine={() => router.push("/dashboards/line-setup")}
+              onLogout={handleLogout}
+            />
           </div>
 
           {/* Mobile hamburger */}
@@ -260,13 +304,26 @@ export default function Navbar() {
           ))}
 
           <button
-            onClick={handleLogout}
+            onClick={() => { setMenuOpen(false); router.push("/dashboards/line-setup"); }}
+            className="w-full text-left px-3 py-2 rounded-md text-sm text-white/80 hover:text-white hover:bg-white/10 transition"
+          >
+            Connect LINE
+          </button>
+          <button
+            onClick={() => { setMenuOpen(false); setShowPw(true); }}
+            className="w-full text-left px-3 py-2 rounded-md text-sm text-white/80 hover:text-white hover:bg-white/10 transition"
+          >
+            Change password
+          </button>
+          <button
+            onClick={() => { setMenuOpen(false); handleLogout(); }}
             className="w-full text-left px-3 py-2 rounded-md text-sm text-white/60 hover:text-white hover:bg-white/10 transition"
           >
             Logout
           </button>
         </div>
       )}
+      {showPw && <ChangePasswordModal onClose={() => setShowPw(false)} />}
     </nav>
   );
 }

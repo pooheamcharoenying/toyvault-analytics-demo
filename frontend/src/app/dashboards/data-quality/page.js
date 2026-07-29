@@ -196,7 +196,7 @@ export default function DataQualityPage() {
             </li>
             <li>
               <span className="font-medium">Brand:</span> Item Master.GroupName → Sale.Brand (most common per item) → Item-code prefix
-              inference (e.g. KM→keepplay, SV→Silverlit).
+              inference (e.g. AE→AeroBot, SN→StackNova).
             </li>
           </ol>
         </div>
