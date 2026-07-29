@@ -1,8 +1,7 @@
 """Stock Allocation Bot.
 
-An intelligent transfer-recommendation layer on top of the existing Nichiworld
-analytics utilities. See STOCK_BOT_BLUEPRINT.md at the project root for the
-full design.
+An intelligent transfer-recommendation layer on top of the existing ToyVault
+analytics utilities.
 
 Public entry point: app.stock_bot.api.generate_transfer_plan()
 """

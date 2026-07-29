@@ -28,6 +28,9 @@ from app.api.routes.file_handling import router as file_handling_router
 from app.api.routes.data_analysis import router as data_analysis_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.planogram import router as planogram_router
+from app.api.routes.assistant import router as assistant_router
+from app.api.routes.line import webhook_router as line_webhook_router, api_router as line_api_router
+from app.api.routes.export import router as export_router
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +137,14 @@ app.include_router(data_analysis_router, prefix="/api", dependencies=[Depends(re
 app.include_router(auth_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
 # Planogram (PAR) endpoints — app-owned shelf minimums in Mongo.
 app.include_router(planogram_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
+# AI assistant (web chat) — behind service Basic auth; per-user session checked inside.
+app.include_router(assistant_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
+# LINE link-code — behind Basic auth (session-gated inside).
+app.include_router(line_api_router, prefix="/api", dependencies=[Depends(require_basic_auth)])
+# LINE webhook — PUBLIC by design (LINE calls it; verified by channel-secret HMAC signature).
+app.include_router(line_webhook_router, prefix="/api")
+# AI-assist file export — PUBLIC (tokenized, short-lived download links; LINE can't attach files).
+app.include_router(export_router, prefix="/api")
 
 # ---------- Public health endpoint ----------
 @app.get("/")

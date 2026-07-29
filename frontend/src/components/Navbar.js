@@ -17,6 +17,7 @@ import Cookies from "js-cookie";
 
 const NAV_STANDALONE = [
   { href: "/", label: "Home" },
+  { href: "/dashboards/ai-assist", label: "AI Assist" },
   { href: "/dashboards/actions", label: "Actions" },
   { href: "/dashboards/executive", label: "Executive" },
 ];
@@ -48,6 +49,7 @@ const NAV_GROUPS = [
       { href: "/dashboards/period-comparison", label: "Period Comparison" },
       { href: "/dashboards/data-quality", label: "Data Quality" },
       { href: "/task1", label: "Barcode Lookup" },
+      { href: "/dashboards/line-setup", label: "LINE Setup" },
     ],
   },
 ];

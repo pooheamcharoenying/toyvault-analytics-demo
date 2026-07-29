@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Option B: DigitalOcean Spaces (legacy path, used if EXCEL_SOURCE_URL is empty)
     DO_ACCESS_KEY: str = ""
     DO_SECRET_KEY: str = ""
-    DO_SPACE_NAME: str = "nichiworld"
+    DO_SPACE_NAME: str = "toyvault-demo"
     DO_REGION: str = "sgp1"
 
     # --- MongoDB (app-owned collections only: users, planogram, assistant threads,
@@ -48,6 +48,23 @@ class Settings(BaseSettings):
 
     # (optional) other global app knobs can live here too
     UPLOAD_DIR: str = "uploads"
+
+    # --- OpenAI (AI Assist chat agent) ---
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-4o"
+    OPENAI_TIMEOUT_SECONDS: float = 60.0
+    OPENAI_MAX_RETRIES: int = 2
+    ASSISTANT_MAX_STEPS: int = 12
+    OPENAI_CONTEXT_LIMIT: int = 128000
+    OPENAI_MODEL_LARGE: str = "gpt-4.1"
+    OPENAI_LARGE_CONTEXT_LIMIT: int = 1000000
+
+    # --- Public base URL (used to build tokenized export download links) ---
+    PUBLIC_BASE_URL: str = "https://toyvault-analytics-demo-production.up.railway.app"
+
+    # --- LINE Messaging API (AI Assist over LINE) ---
+    LINE_CHANNEL_SECRET: str = ""
+    LINE_CHANNEL_ACCESS_TOKEN: str = ""
 
     # Pydantic v2 style config
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
