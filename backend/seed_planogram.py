@@ -18,9 +18,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 TOP_LOCATIONS = 25      # number of store locations to give a planogram
-TOP_SKUS = 40           # SKUs per location (the shelf face)
+TOP_SKUS = 2000         # SKUs per location — cover ~every actively-selling SKU so
+                        # stocked top-sellers all carry a shelf minimum (was 40)
 VEL_MONTHS = 1.0        # min_qty ~ this many months of recent velocity
-MIN_QTY_CAP = 24        # never shelf more than this per SKU
+MIN_QTY_CAP = 48        # never shelf more than this per SKU (was 24)
 WAREHOUSE_HINTS = ("warehouse", "stock area", "dem", "demo", "credit")
 
 
