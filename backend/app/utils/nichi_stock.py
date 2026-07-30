@@ -52,6 +52,26 @@ def compute_gp_commission(df_sales: pd.DataFrame) -> pd.Series:
     return gp
 
 
+def compute_retailer_cut_components(df_sales: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Return (discount_thb, gp_commission_thb) as separate components.
+
+    discount_thb is only the credit-channel implicit-discount piece (Master
+    price minus actual LineTotal); gp_commission_thb is only the consignment
+    GP piece. Their sum equals the total Retailer Cut.
+    """
+    if df_sales.empty:
+        empty = pd.Series(0.0, index=df_sales.index, dtype=float)
+        return empty, empty
+    line_total = pd.to_numeric(df_sales.get("LineTotal", 0), errors="coerce").fillna(0.0)
+    if "Price Master" in df_sales.columns:
+        price_master = pd.to_numeric(df_sales["Price Master"], errors="coerce").fillna(0.0)
+        discount = (price_master - line_total).clip(lower=0.0)
+    else:
+        discount = pd.Series(0.0, index=df_sales.index, dtype=float)
+    gp = compute_gp_commission(df_sales)
+    return discount, gp
+
+
 def prepare_sales_and_onhand_data(df_raw_sale, df_raw_onhand, df_item_master, dept_store_data: Optional[defaultdict[str, list[str]]] = None):
         
     """
